@@ -1,45 +1,40 @@
 # Beewaz Repository Instructions
 
-## Project overview
-Beewaz is a production web application built with:
-- Next.js 16
-- TypeScript
-- PostgreSQL 18
-- Docker
-- Coolify for deployment
+## Repository
 
-## General engineering rules
-- Always inspect the existing codebase before making changes.
-- Prefer minimal, targeted changes over large rewrites.
-- Follow the existing architecture and naming conventions.
-- Do not introduce new dependencies unless clearly necessary.
-- Never expose or commit secrets, API keys, passwords, tokens, or environment values.
-- Never modify .env files unless explicitly requested.
-- Preserve backward compatibility unless the task explicitly requires a breaking change.
-- Do not change unrelated files.
+Beewaz is a production Next.js 16 App Router application under `src/app`, using strict TypeScript, React 19, npm, Drizzle ORM with PostgreSQL, and Docker deployed through Coolify. Database schema and migrations live under `src/lib/db`; container startup applies migrations.
 
-## Before implementation
-- Identify the relevant files and dependencies.
-- Understand the existing implementation.
-- Explain the likely root cause for bugs before editing.
-- For large changes, create a short implementation plan first.
+Follow the universal process and safety baseline in `AGENTS.md` and the applicable path-specific instructions. Preserve npm and the existing architecture; add dependencies only when necessary.
 
-## After implementation
-Always perform the applicable checks:
-- TypeScript typecheck
-- lint
-- tests
-- production build
+## Validation
 
-Review the final git diff before considering the task complete.
+Choose checks proportionate to the change:
+- `npm run typecheck` — TypeScript
+- `npm run lint` — linting
+- `npm test` — Vitest unit/integration tests
+- `npm run test:e2e` — Playwright end-to-end tests using its configured local web server
+- `npm run build` — production Next.js build
 
-## Database rules
-- Never modify production data directly.
-- Review existing schema and migrations before changing database structures.
-- Prefer safe and reversible migrations.
-- Avoid destructive schema changes unless explicitly requested.
+Report commands not run and why. Prompt files remain Local-agent compatibility conveniences; Agent Host may not load them because prompt files are deprecated there.
 
-## Deployment rules
-- Be aware that production is deployed using Docker and Coolify.
-- Changes must remain compatible with the current Docker-based deployment.
-- Do not change Docker or deployment configuration without checking its impact.
+## Tool and MCP safety
+
+- Restrict file operations to the workspace.
+- Use the configured GitHub MCP read-only endpoint for repository evidence.
+- Use Playwright MCP only against local or isolated test targets.
+- Never perform production actions, deployments, database writes, orders, payments, or SMS sends without explicit authorization.
+- Never read, print, or commit secret values. Check only required environment-variable names when reviewing configuration.
+- Do not add PostgreSQL MCP unless a separately provisioned role has verified server-side SELECT-only grants.
+- Do not add redundant filesystem MCP access; workspace-scoped tools already provide file operations.
+
+## Model selection policy
+
+The repository cannot enforce automatic model routing; the user or host selects the model.
+- Use the fastest suitable low-cost model for lookups, small edits, formatting, and routine validation.
+- Use a Sonnet-class or reasoning model for multi-file implementation, debugging, and standard reviews.
+- Use the strongest or Opus-class model only for architecture with major tradeoffs, high-risk security analysis, complex cross-system failures, difficult migrations, or after a cheaper model demonstrably fails.
+- Never default all work to Opus or invent model names or repository configuration.
+
+## Production constraints
+
+Keep changes compatible with the existing Docker/Coolify release path and assess migration behavior under live traffic. Never modify `.github/workflows/deploy.yml` unless the task explicitly requires it.

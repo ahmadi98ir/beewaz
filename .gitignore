@@ -23,7 +23,8 @@ yarn-error.log*
 next-env.d.ts
 
 # editor
-.vscode/
+.vscode/*
+!.vscode/mcp.json
 .idea/
 *.swp
 

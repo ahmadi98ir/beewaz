@@ -1,5 +1,5 @@
 ---
-applyTo: "**/*.tsx,**/*.jsx,app/**/*.ts,app/**/*.tsx,components/**/*.ts,components/**/*.tsx"
+applyTo: "src/app/**/*.ts,src/app/**/*.tsx,src/components/**/*.ts,src/components/**/*.tsx,**/*.tsx,**/*.jsx"
 ---
 
 # Frontend Instructions
@@ -14,3 +14,11 @@ applyTo: "**/*.tsx,**/*.jsx,app/**/*.ts,app/**/*.tsx,components/**/*.ts,componen
 - Avoid duplicating UI logic.
 - Keep accessibility in mind.
 - Do not introduce hydration mismatches.
+
+## Browser and UI validation
+
+- Start with the existing Playwright `webServer` and `npm run test:e2e` workflow.
+- Target local or isolated test environments only; never mutate production.
+- Verify critical pages, console and page errors, responsive layouts, and important forms and actions.
+- Assert real expected behavior. Do not add fake or coverage-only tests.
+- Authentication and checkout tests may require safe fixtures; they must not send production SMS messages or create production orders or payments.
