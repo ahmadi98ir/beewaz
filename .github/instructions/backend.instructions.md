@@ -1,5 +1,5 @@
 ---
-applyTo: "app/api/**/*.ts,src/server/**/*.ts,server/**/*.ts"
+applyTo: "src/app/api/**/*.ts,src/server/**/*.ts"
 ---
 
 # Backend Instructions

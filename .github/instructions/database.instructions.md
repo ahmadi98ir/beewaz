@@ -1,5 +1,5 @@
 ---
-applyTo: "**/*schema*,**/*migration*,db/**/*.ts,database/**/*.ts,prisma/**/*"
+applyTo: "drizzle.config.ts,migrate.mjs,src/lib/db/**/*,**/*schema*,**/*migration*"
 ---
 
 # Database Instructions
