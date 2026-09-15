@@ -38,9 +38,13 @@ export function Hero3D({ stats }: Hero3DProps) {
 
     const scheduleLoad = () => {
       const runImport = () => {
-        import('./Hero3DScene').then((mod) => {
-          if (!cancelled) setScene(() => mod.default)
-        })
+        import('./Hero3DScene')
+          .then((mod) => {
+            if (!cancelled) setScene(() => mod.default)
+          })
+          .catch(() => {
+            if (!cancelled) setCanvasFailed(true)
+          })
       }
       if (typeof window.requestIdleCallback === 'function') {
         idleHandle = window.requestIdleCallback(runImport, { timeout: 1500 })
