@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import Image from 'next/image'
 import { db } from '@/lib/db'
 import { products, categories, productImages } from '@/lib/db/schema'
 import { eq, desc } from 'drizzle-orm'
@@ -43,8 +44,13 @@ export async function FeaturedProducts() {
                 <Link href={href} className="group bg-white rounded-2xl border border-surface-100 overflow-hidden hover:shadow-lg hover:border-brand-200 transition-all duration-300 hover-lift block">
                   <div className="relative aspect-square bg-surface-50 overflow-hidden">
                     {item.imageUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={item.imageUrl} alt={item.nameFa} className="w-full h-full object-cover group-hover:scale-108 transition-transform duration-500" />
+                      <Image
+                        src={item.imageUrl}
+                        alt={item.nameFa}
+                        fill
+                        sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
+                        className="object-cover group-hover:scale-108 transition-transform duration-500"
+                      />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-5xl opacity-25">📦</div>
                     )}

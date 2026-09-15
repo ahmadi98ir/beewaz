@@ -16,7 +16,7 @@ export async function POST(req: Request) {
       sessionId?: string
     }
 
-    if (!body.path) {
+    if (!body.path || typeof body.path !== 'string') {
       return NextResponse.json({ ok: false }, { status: 400 })
     }
 
@@ -29,17 +29,20 @@ export async function POST(req: Request) {
 
     await db.insert(pageViews).values({
       path: body.path.slice(0, 500),
-      referrer: body.referrer?.slice(0, 500),
+      referrer: typeof body.referrer === 'string' ? body.referrer.slice(0, 500) : undefined,
       userAgent: ua.slice(0, 300),
       device,
       browser,
       os,
-      sessionId: body.sessionId?.slice(0, 64),
+      sessionId: typeof body.sessionId === 'string' ? body.sessionId.slice(0, 64) : undefined,
     })
 
     return NextResponse.json({ ok: true })
-  } catch {
-    // بازدیدها اگر fail شدن مشکلی نیست — silent fail
+  } catch (err) {
+    // بازدیدها اگر fail شدن مشکلی نیست — silent fail سمت کلاینت (fire-and-forget)
+    // اما لاگ سمت سرور حفظ می‌شود تا خطاهای واقعی از قطع‌شدن درخواست هنگام ناوبری صفحه
+    // (که خودش خطای عادی و بی‌ضرر است) قابل تشخیص باشند
+    console.error('[analytics/track] insert failed:', err instanceof Error ? err.message : err)
     return NextResponse.json({ ok: false }, { status: 500 })
   }
 }

@@ -32,12 +32,15 @@ function AnimateIn({ children, delay=0, className='' }: { children:ReactNode; de
   const [visible, setVisible] = useState(false)
   useEffect(() => {
     const el = ref.current; if (!el) return
+    const prefersReducedMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    if (prefersReducedMotion || typeof IntersectionObserver === 'undefined') { setVisible(true); return }
+    const failSafe = setTimeout(() => setVisible(true), 2500)
     const obs = new IntersectionObserver(entries => {
       const e = entries[0]; if (!e) return
       if (e.isIntersecting) { setVisible(true); obs.disconnect() }
     }, { threshold:0.1 })
     obs.observe(el)
-    return () => obs.disconnect()
+    return () => { obs.disconnect(); clearTimeout(failSafe) }
   }, [])
   return (
     <div ref={ref} className={className} style={{ opacity:visible?1:0, transform:visible?'translateY(0)':'translateY(40px)', transition:`opacity 0.7s ease ${delay}ms, transform 0.7s ease ${delay}ms` }}>

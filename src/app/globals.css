@@ -35,10 +35,21 @@
   --color-surface-50:  #f8fafc;
   --color-surface-100: #f1f5f9;
   --color-surface-200: #e2e8f0;
+  --color-surface-300: #94a3b8;
+  --color-surface-400: #64748b;
+  --color-surface-500: #475569;
+  --color-surface-600: #3e4c63;
   --color-surface-700: #334155;
   --color-surface-800: #1e293b;
   --color-surface-900: #0f172a;
   --color-surface-950: #080e1d;
+
+  /* Gunmetal — سطوح تیره سینمایی (Hero، بخش‌های تیره) — یک مقیاس یکپارچه
+     به‌جای هگزادسیمال‌های پراکنده در هر کامپوننت */
+  --color-gunmetal-900: #03060F;
+  --color-gunmetal-800: #060B1A;
+  --color-gunmetal-700: #0A1024;
+  --color-gunmetal-600: #0F1830;
 
   /* Typography — Vazirmatn از CDN در layout بارگیری می‌شود */
   --font-sans:    "Vazirmatn", "IRANSans", system-ui, sans-serif;
@@ -404,6 +415,23 @@
   .reveal-right { opacity: 0; transform: translateX(20px) translateY(6px);  transition: opacity 0.65s var(--ease-out-expo), transform 0.65s var(--ease-out-expo); overflow: clip; }
   .reveal-scale { opacity: 0; transform: scale(0.92);       transition: opacity 0.55s var(--ease-out-expo), transform 0.55s var(--ease-spring); }
   .reveal-left.visible, .reveal-right.visible, .reveal-scale.visible { opacity: 1; transform: translateX(0) translateY(0) scale(1); }
+
+  /* Fail-open: هرگز محتوا نباید برای همیشه مخفی بماند.
+     اگر JS اجرا نشود یا کاربر reduced-motion فعال کرده باشد، محتوا فوراً نمایش داده می‌شود. */
+  .reveal, .reveal-left, .reveal-right, .reveal-scale {
+    animation: reveal-force-visible 0s 2.5s forwards;
+  }
+  @keyframes reveal-force-visible {
+    to { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal, .reveal-left, .reveal-right, .reveal-scale {
+      opacity: 1 !important;
+      transform: none !important;
+      transition: none !important;
+      animation: none !important;
+    }
+  }
 
   /* Counter animate */
   @keyframes count-up {

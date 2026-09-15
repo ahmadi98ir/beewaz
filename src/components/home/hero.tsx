@@ -108,6 +108,18 @@ export function Hero({ cms }: HeroProps) {
           .hero-badges{position:static!important;transform:none!important;flex-direction:row!important;gap:0.75rem!important;flex-wrap:wrap!important;margin-top:1.5rem!important;}
           .hero-badge-item{flex:1!important;min-width:120px!important;}
         }
+        /* fail-open برای کاربران reduced-motion — انیمیشن‌های تزئینی مداوم متوقف می‌شوند
+           اما محتوا (متن، دکمه‌ها، آیکون شیلد) همیشه کامل و بدون افکت ورود نمایش داده می‌شود */
+        @media (prefers-reduced-motion: reduce) {
+          .hero-headline span, .hero-trust, .hero-shield-wrap {
+            animation: none !important;
+            opacity: 1 !important;
+            transform: none !important;
+          }
+          .hero-cta-primary, .hero-cta-secondary {
+            animation: none !important;
+          }
+        }
       `}</style>
 
       {/* Background */}
@@ -183,8 +195,16 @@ export function Hero({ cms }: HeroProps) {
           </div>
         </div>
 
-        {/* Shield visual */}
-        <div className="hero-shield-wrap" style={{ display:'flex', alignItems:'center', justifyContent:'center', position:'relative', animation:'heroFadeIn 0.9s 0.3s ease both', opacity:0, animationFillMode:'forwards' }}>
+        {/*
+          Shield visual — این کانتینر مرز/جایگاه رزرو‌شده برای صحنه سه‌بعدی BEE در Phase B است.
+          در Phase A فقط ساختار/مرز کامپوننت آماده می‌شود؛ هیچ WebGL/Canvas یا جعبه خالی تزئینی
+          اضافه نشده — محتوای فعلی (آیکون شیلد SVG استاتیک) کاملاً واقعی و قابل مشاهده می‌ماند
+          و در Phase B با اسکن 3D جایگزین خواهد شد (aspect-ratio و اندازه‌بندی از قبل رزرو شده است).
+        */}
+        <div
+          className="hero-shield-wrap"
+          data-future-3d-slot="hero-shield"
+          style={{ display:'flex', alignItems:'center', justifyContent:'center', position:'relative', animation:'heroFadeIn 0.9s 0.3s ease both', opacity:0, animationFillMode:'forwards' }}>
           <div style={{ position:'absolute', width:420, height:420, borderRadius:'50%', background:'radial-gradient(circle, rgba(249,115,22,0.12) 0%, transparent 70%)', animation:'floatUp 6s ease-in-out infinite' }} />
           {[0,1,2,3].map(i => (
             <div key={i} style={{ position:'absolute', width:300-i*20, height:300-i*20, borderRadius:'50%', border:`1px solid rgba(249,115,22,${0.15-i*0.03})`, animation:`radarPulse ${3+i*0.8}s ease-out infinite`, animationDelay:`${i*0.75}s`, pointerEvents:'none' }} />

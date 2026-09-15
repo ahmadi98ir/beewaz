@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { useSession } from 'next-auth/react'
 import { ShoppingCartIcon, HeartIcon } from '@/components/ui/icons'
 import { formatPrice, discountPercent, toFaDigits } from '@/lib/utils'
@@ -303,10 +304,12 @@ function ProductImage({ product, className = '' }: { product: ShopProduct; class
         className={`w-full relative overflow-hidden transition-transform duration-500 group-hover:scale-105 ${className}`}
         style={{ background: `linear-gradient(135deg, ${product.placeholderFrom} 0%, ${product.placeholderTo} 100%)` }}
       >
-        <img
+        <Image
           src={firstImage.url}
           alt={firstImage.alt ?? product.nameFa}
-          className="absolute inset-0 w-full h-full object-contain p-3"
+          fill
+          sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 220px"
+          className="object-contain p-3"
         />
       </div>
     )
