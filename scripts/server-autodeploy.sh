@@ -3,9 +3,10 @@ set -Eeuo pipefail
 
 # Canonical Beewaz production auto-deploy bridge.
 # GitHub Actions publishes ghcr.io/ahmadi98ir/beewaz-web:latest from main.
-# This script pulls that image, dynamically discovers the current *running*
-# Coolify service, recreates only Beewaz, verifies the new container locally,
-# and automatically restores the previous image if activation fails.
+# This script pulls that image, dynamically discovers the current running
+# Coolify *application* service (excluding project databases), recreates only
+# Beewaz, verifies the new container locally, and restores the previous image
+# automatically if activation fails.
 
 SOURCE_IMAGE="ghcr.io/ahmadi98ir/beewaz-web:latest"
 LOCK_FILE="/run/lock/beewaz-autodeploy.lock"
@@ -32,19 +33,30 @@ if ! flock -n 9; then
   exit 0
 fi
 
-# Locate only the currently running production app from stable Coolify labels.
-# Coolify can leave stopped historical containers with the same labels after a
-# recreate; including them would make discovery ambiguous. If production is
-# not running, fail closed rather than guessing which stopped container to use.
-mapfile -t CONTAINERS < <(
+# Coolify gives application containers and project databases the same
+# project/environment labels. Select only a running Coolify application:
+#   - coolify.applicationId must be non-empty
+#   - Compose working directory must live under /data/coolify/applications/
+# Fail closed if this does not identify exactly one container.
+mapfile -t CANDIDATES < <(
   docker ps \
     --filter 'label=coolify.projectName=beewaz' \
     --filter 'label=coolify.environmentName=production' \
     --format '{{.Names}}'
 )
 
+CONTAINERS=()
+for candidate in "${CANDIDATES[@]}"; do
+  APP_ID="$(docker inspect -f '{{ index .Config.Labels "coolify.applicationId" }}' "$candidate" 2>/dev/null || true)"
+  WORKDIR="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$candidate" 2>/dev/null || true)"
+
+  if [[ -n "$APP_ID" && "$WORKDIR" == /data/coolify/applications/* ]]; then
+    CONTAINERS+=("$candidate")
+  fi
+done
+
 if [[ "${#CONTAINERS[@]}" -ne 1 ]]; then
-  log "ERROR: expected exactly one running Beewaz production container, found ${#CONTAINERS[@]}"
+  log "ERROR: expected exactly one running Beewaz Coolify application, found ${#CONTAINERS[@]} (project candidates=${#CANDIDATES[@]})"
   exit 1
 fi
 
@@ -58,11 +70,12 @@ if [[ -z "$IMAGE_NAME" || -z "$OLD_IMAGE_ID" || -z "$COMPOSE_WORKDIR" || -z "$CO
   log "ERROR: missing Coolify/Compose metadata on $CONTAINER"
   exit 1
 fi
-if [[ ! -d "$COMPOSE_WORKDIR" ]]; then
-  log "ERROR: compose workdir not found: $COMPOSE_WORKDIR"
+if [[ "$COMPOSE_WORKDIR" != /data/coolify/applications/* || ! -d "$COMPOSE_WORKDIR" ]]; then
+  log "ERROR: invalid compose application workdir: $COMPOSE_WORKDIR"
   exit 1
 fi
 
+log "Selected application container=$CONTAINER service=$COMPOSE_SERVICE"
 log "Checking $SOURCE_IMAGE"
 if ! docker pull "$SOURCE_IMAGE"; then
   log "ERROR: failed to pull $SOURCE_IMAGE; production left unchanged"
