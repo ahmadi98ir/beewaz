@@ -6,6 +6,7 @@ import { Header } from '@/components/layout/header'
 import { Footer } from '@/components/layout/footer'
 import { ChatWidget } from '@/components/chat/chat-widget'
 import { Bee } from '@/components/bee/Bee'
+import { BeeChatStateProvider } from '@/components/bee/BeeChatState'
 import { ToastContainer } from '@/components/ui/toast'
 import { PageTransition } from '@/components/ui/page-transition'
 import { QuickViewModal } from '@/components/shop/quick-view-modal'
@@ -130,8 +131,10 @@ export default async function RootLayout({
               <PageTransition>{children}</PageTransition>
             </main>
             <Footer />
-            <ChatWidget />
-            <Bee />
+            <BeeChatStateProvider>
+              <ChatWidget />
+              <Bee />
+            </BeeChatStateProvider>
             <QuickViewModal />
             <FloatingCart />
             <FloatingCartButton />
