@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { useBeeChatState } from '@/components/bee/BeeChatState'
 import { XIcon, PhoneIcon } from '@/components/ui/icons'
 import type { ChatMessage } from '@/types/chat'
 import { MessageBubble } from './message-bubble'
@@ -48,6 +49,11 @@ function makeVisitorToken() {
 // ── Main Widget ────────────────────────────────────────────────────────────
 
 export function ChatWidget() {
+  const {
+    state: beeState,
+    setState: setBeeState,
+    setTransientState: setBeeTransientState,
+  } = useBeeChatState()
   const [config, setConfig] = useState<ChatConfig>(CONFIG_DEFAULTS)
   const [configLoaded, setConfigLoaded] = useState(false)
   const [open, setOpen] = useState(false)
@@ -113,6 +119,7 @@ export function ChatWidget() {
     setMessages((prev) => [...prev, userMsg])
     setInputValue('')
     setIsTyping(true)
+    setBeeState('thinking')
 
     const newHistory: GeminiMessage[] = [...history, { role: 'user', text: text.trim() }]
     setHistory(newHistory)
@@ -144,6 +151,7 @@ export function ChatWidget() {
       setIsTyping(false)
 
       const replyText = data.error ?? data.message
+      const responseIsError = !res.ok || !!data.error
 
       // Extract quick replies from bot response if it contains numbered options
       let quickReplies: string[] | undefined
@@ -161,6 +169,7 @@ export function ChatWidget() {
       })
 
       setHistory((prev) => [...prev, { role: 'model', text: replyText }])
+      setBeeTransientState(responseIsError ? 'error' : 'speaking')
 
       // Lead capture — detect phone number
       if (data.leadCaptured && data.phone && !leadSaved) {
@@ -179,6 +188,7 @@ export function ChatWidget() {
       }
     } catch {
       setIsTyping(false)
+      setBeeTransientState('error')
       pushBotMessage({
         id: makeId(),
         role: 'bot',
@@ -187,11 +197,20 @@ export function ChatWidget() {
         quickReplies: ['تلاش مجدد'],
       })
     }
-  }, [history, isTyping, leadSaved, pushBotMessage])
+  }, [history, isTyping, leadSaved, pushBotMessage, setBeeState, setBeeTransientState])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (inputValue.trim()) sendMessage(inputValue)
+  }
+
+  const handleToggleChat = () => {
+    const nextOpen = !open
+    setOpen(nextOpen)
+    setHasNewMsg(false)
+    if (nextOpen && !isTyping && beeState === 'idle') {
+      setBeeTransientState('greeting')
+    }
   }
 
   if (!configLoaded) return null
@@ -275,7 +294,7 @@ export function ChatWidget() {
 
       {/* ── Floating Button ───────────────────────────────────────────────── */}
       <button
-        onClick={() => { setOpen((v) => !v); setHasNewMsg(false) }}
+        onClick={handleToggleChat}
         className={[
           'fixed bottom-4 right-4 sm:right-6 z-50 w-14 h-14 rounded-2xl shadow-xl',
           'flex items-center justify-center transition-all duration-300',
