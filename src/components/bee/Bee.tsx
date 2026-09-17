@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ComponentType } from 'react'
 import { BeeFallback } from './BeeFallback'
 import { BeeErrorBoundary } from './BeeErrorBoundary'
+import { useBeeChatState } from './BeeChatState'
 import { resolveBeeTier, BEE_STATES, type BeeTier, type BeeState } from './bee-config'
 import type { BeeSceneProps } from './BeeScene'
 
@@ -13,17 +14,16 @@ import type { BeeSceneProps } from './BeeScene'
 // widget's critical bundle for Tier C devices, all mobile viewports, and
 // reduced-motion/Save-Data/low-power users.
 //
-// Dev-only state preview: intentionally NOT a separate module. A prior
-// attempt used a separate `BeeDevPreview.tsx` file referenced via a
-// `require()` guarded by `NODE_ENV`, but Turbopack's static dependency
-// resolution still includes a `require()`'d module in the production client
-// chunk regardless of the surrounding `if` (verified by grepping the built
-// `.next` output). Defining the control inline, in this same module scope,
-// lets production minification's dead-code elimination remove the whole
-// `if (process.env.NODE_ENV !== 'production') { ... }` block — including
-// this function — as ordinary same-scope dead code, which was verified to
-// actually disappear from the production build (see validation notes).
-function DevStatePreview({ state, onChange }: { state: BeeState; onChange: (s: BeeState) => void }) {
+// Dev-only state preview remains in this module so production dead-code
+// elimination can remove it. `null` means "live" and follows ChatWidget;
+// selecting an explicit state temporarily overrides the live Phase D signal.
+function DevStatePreview({
+  state,
+  onChange,
+}: {
+  state: BeeState | null
+  onChange: (state: BeeState | null) => void
+}) {
   return (
     <div
       style={{
@@ -44,10 +44,11 @@ function DevStatePreview({ state, onChange }: { state: BeeState; onChange: (s: B
       <label style={{ fontSize: 10, color: '#9AA5B8', fontFamily: 'monospace' }}>
         bee (dev only)
         <select
-          value={state}
-          onChange={(e) => onChange(e.target.value as BeeState)}
+          value={state ?? '__live__'}
+          onChange={(e) => onChange(e.target.value === '__live__' ? null : e.target.value as BeeState)}
           style={{ display: 'block', marginTop: 2, fontSize: 11, width: '100%' }}
         >
+          <option value="__live__">live</option>
           {BEE_STATES.map((s) => (
             <option key={s} value={s}>
               {s}
@@ -60,12 +61,13 @@ function DevStatePreview({ state, onChange }: { state: BeeState; onChange: (s: B
 }
 
 export function Bee() {
+  const { state: liveState } = useBeeChatState()
   const [tier, setTier] = useState<BeeTier | null>(null)
   const [Scene, setScene] = useState<ComponentType<BeeSceneProps> | null>(null)
   const [canvasReady, setCanvasReady] = useState(false)
   const [canvasFailed, setCanvasFailed] = useState(false)
   const [active, setActive] = useState(true)
-  const [previewState, setPreviewState] = useState<BeeState>('idle')
+  const [previewState, setPreviewState] = useState<BeeState | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -105,31 +107,31 @@ export function Bee() {
     if (!wrapperRef.current) return
     const observer = new IntersectionObserver(
       (entries) => setActive(!!entries[0]?.isIntersecting),
-      { threshold: 0 }
+      { threshold: 0 },
     )
     observer.observe(wrapperRef.current)
     return () => observer.disconnect()
   }, [])
 
   const show3D = tier !== null && tier !== 'C' && Scene !== null && !canvasFailed
-
-  // Production ships state="idle" only — the preview control (dev-only,
-  // build-time-excluded below) is the sole way to drive other states.
-  const state: BeeState = process.env.NODE_ENV !== 'production' ? previewState : 'idle'
+  const state: BeeState = process.env.NODE_ENV !== 'production' && previewState !== null
+    ? previewState
+    : liveState
 
   return (
     <div
       ref={wrapperRef}
-      // Reuses ChatWidget's own physical `right-4`/`sm:right-6` anchor
-      // (`bottom-24` = 96px clears the FAB's `bottom-4` + 56px height with a
-      // safety gap) rather than introducing a new RTL/logical positioning
-      // convention — see plan §3/§5.
+      // Reuses ChatWidget's own physical `right-4`/`sm:right-6` anchor.
       className="fixed bottom-24 right-4 sm:right-6 z-40 w-[72px] h-[72px] pointer-events-none"
     >
       {process.env.NODE_ENV !== 'production' && (
         <DevStatePreview state={previewState} onChange={setPreviewState} />
       )}
-      <BeeFallback opacity={show3D && canvasReady ? 0 : 1} instant={canvasFailed} />
+      <BeeFallback
+        state={state}
+        opacity={show3D && canvasReady ? 0 : 1}
+        instant={canvasFailed}
+      />
       {show3D && Scene && (
         <div
           aria-hidden="true"
