@@ -3,9 +3,9 @@ set -Eeuo pipefail
 
 # Canonical Beewaz production auto-deploy bridge.
 # GitHub Actions publishes ghcr.io/ahmadi98ir/beewaz-web:latest from main.
-# This script pulls that image, dynamically discovers the current Coolify
-# service, recreates only Beewaz, verifies the new container locally, and
-# automatically restores the previous image if activation fails.
+# This script pulls that image, dynamically discovers the current *running*
+# Coolify service, recreates only Beewaz, verifies the new container locally,
+# and automatically restores the previous image if activation fails.
 
 SOURCE_IMAGE="ghcr.io/ahmadi98ir/beewaz-web:latest"
 LOCK_FILE="/run/lock/beewaz-autodeploy.lock"
@@ -32,17 +32,19 @@ if ! flock -n 9; then
   exit 0
 fi
 
-# Locate the production app from stable Coolify labels rather than a UUID,
-# generated container name, or application ID.
+# Locate only the currently running production app from stable Coolify labels.
+# Coolify can leave stopped historical containers with the same labels after a
+# recreate; including them would make discovery ambiguous. If production is
+# not running, fail closed rather than guessing which stopped container to use.
 mapfile -t CONTAINERS < <(
-  docker ps -a \
+  docker ps \
     --filter 'label=coolify.projectName=beewaz' \
     --filter 'label=coolify.environmentName=production' \
     --format '{{.Names}}'
 )
 
 if [[ "${#CONTAINERS[@]}" -ne 1 ]]; then
-  log "ERROR: expected exactly one Beewaz production container, found ${#CONTAINERS[@]}"
+  log "ERROR: expected exactly one running Beewaz production container, found ${#CONTAINERS[@]}"
   exit 1
 fi
 
