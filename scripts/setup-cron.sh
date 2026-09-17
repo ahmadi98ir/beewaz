@@ -34,7 +34,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
-ReadWritePaths=/var/lib/beewaz-deploy /run/lock /tmp /data/coolify
+# The GHCR-based bridge no longer writes deployment state under /var/lib.
+# It only needs the Docker socket plus read/write access to Coolify's compose
+# working directory and the existing runtime lock directory.
+ReadWritePaths=/run/lock /data/coolify
 
 [Install]
 WantedBy=multi-user.target
@@ -42,7 +45,7 @@ EOF
 
 cat > "$TIMER" <<'EOF'
 [Unit]
-Description=Poll for a new Beewaz production build every 2 minutes
+Description=Poll GHCR for a new Beewaz production image every 2 minutes
 
 [Timer]
 OnBootSec=45s
@@ -62,6 +65,7 @@ if crontab -l >/tmp/beewaz-root-crontab.$$ 2>/dev/null; then
 fi
 
 systemctl daemon-reload
+systemctl reset-failed beewaz-autodeploy.service 2>/dev/null || true
 systemctl enable --now beewaz-autodeploy.timer
 
 echo "Installed: $DST"
