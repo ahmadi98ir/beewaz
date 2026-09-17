@@ -1,102 +1,149 @@
-#!/bin/bash
-# /opt/beewaz-autodeploy.sh
-# Auto-deploy — tarball را از Cloudflare R2 دانلود می‌کند
-# cron: * * * * * /opt/beewaz-autodeploy.sh >> /var/log/beewaz-deploy.log 2>&1
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-R2_BASE="https://pub-304fa4e803c8406fa2617521a41f0971.r2.dev"
-STATE_FILE="/var/lib/beewaz-deploy/last-sha"
-DEPLOY_LOCK="/tmp/beewaz-deploy-running.lock"
-POLL_LOCK="/tmp/beewaz-poll.lock"
-BUILD_DIR="/tmp/bz-build"
-TARBALL="/tmp/beewaz-build.tar.gz"
+# Canonical Beewaz production auto-deploy bridge.
+# GitHub Actions publishes ghcr.io/ahmadi98ir/beewaz-web:latest from main.
+# This script pulls that image, dynamically discovers the current running
+# Coolify *application* service (excluding project databases), recreates only
+# Beewaz, verifies the new container locally, and restores the previous image
+# automatically if activation fails.
 
-log() { logger -t beewaz-deploy "$*"; echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+SOURCE_IMAGE="ghcr.io/ahmadi98ir/beewaz-web:latest"
+LOCK_FILE="/run/lock/beewaz-autodeploy.lock"
+ROLLBACK_TAG="beewaz-rollback:previous"
+HEALTH_PORT="3000"
 
-mkdir -p "$(dirname $STATE_FILE)"
-
-download_with_retry() {
-  local URL="$1" DEST="$2"
-  for attempt in 1 2 3 4 5; do
-    if curl -fsSL --max-time 120 --retry 2 -o "$DEST" "$URL" 2>/dev/null; then
-      return 0
-    fi
-    log "Download attempt $attempt failed, retrying in ${attempt}0s..."
-    sleep $((attempt * 10))
-  done
-  return 1
+log() {
+  local msg="[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] $*"
+  echo "$msg"
+  logger -t beewaz-deploy -- "$msg" 2>/dev/null || true
 }
 
-do_deploy() {
-  local SHA="$1"
-  if [ -f "$DEPLOY_LOCK" ]; then log "deploy already in progress"; return; fi
-  touch "$DEPLOY_LOCK"
-  trap "rm -f $DEPLOY_LOCK" RETURN
-
-  log "New commit detected ($SHA) — downloading build tarball from R2..."
-
-  rm -f "$TARBALL"
-  if ! download_with_retry "$R2_BASE/beewaz-build.tar.gz" "$TARBALL"; then
-    log "ERROR: download failed after 5 attempts"
-    return
-  fi
-  log "Download complete ($(du -sh $TARBALL | cut -f1))"
-
-  rm -rf "$BUILD_DIR" && mkdir -p "$BUILD_DIR"
-  if ! tar -xzf "$TARBALL" -C "$BUILD_DIR" 2>&1; then
-    log "ERROR: tar extraction failed"
-    return
-  fi
-
-  if [ ! -f "$BUILD_DIR/Dockerfile" ]; then
-    log "ERROR: Dockerfile not found in tarball"
-    return
-  fi
-
-  CONTAINER=$(docker ps --format "{{.Names}}" | grep "jw4kpfn8utdybrmwkr80fm8f" | head -1)
-  if [ -z "$CONTAINER" ]; then log "ERROR: container not found"; return; fi
-  IMAGE=$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" 2>/dev/null)
-  log "Container: $CONTAINER | Image: $IMAGE"
-
-  log "Building Docker image..."
-  if docker build -t "$IMAGE" "$BUILD_DIR" 2>&1 | tail -5; then
-    log "Build successful"
-  else
-    log "ERROR: docker build failed"
-    return
-  fi
-
-  log "Restarting container..."
-  if docker restart "$CONTAINER" >/dev/null 2>&1; then
-    echo "$SHA" > "$STATE_FILE"
-    log "✅ Deploy successful (sha=$SHA)"
-    # Notify Coolify to pick up the new image
-    COOLIFY_RESP=$(curl -sf --max-time 15 -X POST \
-      "http://78.157.51.14:8000/api/v1/applications/jw4kpfn8utdybrmwkr80fm8f/restart" \
-      -H "Authorization: Bearer 5|beewaz-deploy-fix-2026" \
-      -H "Content-Type: application/json" 2>&1) && \
-      log "Coolify restart triggered: $COOLIFY_RESP" || \
-      log "Coolify restart notify failed (non-critical): $COOLIFY_RESP"
-  else
-    log "ERROR: docker restart failed"
-  fi
-}
-
-check_once() {
-  SHA=$(curl -sf --max-time 10 "$R2_BASE/sha.txt" 2>/dev/null | tr -d '[:space:]')
-  [ -z "$SHA" ] && return
-
-  CURRENT=$(cat "$STATE_FILE" 2>/dev/null)
-  [ "$SHA" = "$CURRENT" ] && return
-
-  do_deploy "$SHA"
-}
-
-if [ -f "$POLL_LOCK" ]; then exit 0; fi
-touch "$POLL_LOCK"
-trap "rm -f $POLL_LOCK" EXIT
-
-for i in 1 2 3; do
-  check_once
-  [ -f "$DEPLOY_LOCK" ] && break
-  [ "$i" -lt 3 ] && sleep 20
+for cmd in docker curl flock; do
+  command -v "$cmd" >/dev/null 2>&1 || {
+    log "ERROR: missing command: $cmd"
+    exit 1
+  }
 done
+
+# Prevent overlapping timer/manual runs.
+touch "$LOCK_FILE"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  exit 0
+fi
+
+# Coolify gives application containers and project databases the same
+# project/environment labels. Select only a running Coolify application:
+#   - coolify.applicationId must be non-empty
+#   - Compose working directory must live under /data/coolify/applications/
+# Fail closed if this does not identify exactly one container.
+mapfile -t CANDIDATES < <(
+  docker ps \
+    --filter 'label=coolify.projectName=beewaz' \
+    --filter 'label=coolify.environmentName=production' \
+    --format '{{.Names}}'
+)
+
+CONTAINERS=()
+for candidate in "${CANDIDATES[@]}"; do
+  APP_ID="$(docker inspect -f '{{ index .Config.Labels "coolify.applicationId" }}' "$candidate" 2>/dev/null || true)"
+  WORKDIR="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$candidate" 2>/dev/null || true)"
+
+  if [[ -n "$APP_ID" && "$WORKDIR" == /data/coolify/applications/* ]]; then
+    CONTAINERS+=("$candidate")
+  fi
+done
+
+if [[ "${#CONTAINERS[@]}" -ne 1 ]]; then
+  log "ERROR: expected exactly one running Beewaz Coolify application, found ${#CONTAINERS[@]} (project candidates=${#CANDIDATES[@]})"
+  exit 1
+fi
+
+CONTAINER="${CONTAINERS[0]}"
+IMAGE_NAME="$(docker inspect -f '{{.Config.Image}}' "$CONTAINER")"
+OLD_IMAGE_ID="$(docker inspect -f '{{.Image}}' "$CONTAINER")"
+COMPOSE_WORKDIR="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$CONTAINER")"
+COMPOSE_SERVICE="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.service" }}' "$CONTAINER")"
+
+if [[ -z "$IMAGE_NAME" || -z "$OLD_IMAGE_ID" || -z "$COMPOSE_WORKDIR" || -z "$COMPOSE_SERVICE" ]]; then
+  log "ERROR: missing Coolify/Compose metadata on $CONTAINER"
+  exit 1
+fi
+if [[ "$COMPOSE_WORKDIR" != /data/coolify/applications/* || ! -d "$COMPOSE_WORKDIR" ]]; then
+  log "ERROR: invalid compose application workdir: $COMPOSE_WORKDIR"
+  exit 1
+fi
+
+log "Selected application container=$CONTAINER service=$COMPOSE_SERVICE"
+log "Checking $SOURCE_IMAGE"
+if ! docker pull "$SOURCE_IMAGE"; then
+  log "ERROR: failed to pull $SOURCE_IMAGE; production left unchanged"
+  exit 1
+fi
+NEW_IMAGE_ID="$(docker image inspect -f '{{.Id}}' "$SOURCE_IMAGE")"
+
+if [[ "$NEW_IMAGE_ID" == "$OLD_IMAGE_ID" ]]; then
+  log "Already current: image=$NEW_IMAGE_ID container=$CONTAINER"
+  exit 0
+fi
+
+log "New image detected: old=$OLD_IMAGE_ID new=$NEW_IMAGE_ID"
+
+recreate_service() {
+  (
+    cd "$COMPOSE_WORKDIR"
+    docker compose up -d \
+      --force-recreate \
+      --no-deps \
+      --pull never \
+      "$COMPOSE_SERVICE"
+  )
+}
+
+rollback() {
+  log "ROLLBACK: restoring previous image $OLD_IMAGE_ID"
+  docker tag "$OLD_IMAGE_ID" "$IMAGE_NAME"
+  if recreate_service; then
+    log "ROLLBACK: previous image recreated"
+  else
+    log "ERROR: rollback recreate failed"
+  fi
+}
+
+# Preserve the current working image before moving the compose-facing tag.
+docker tag "$OLD_IMAGE_ID" "$ROLLBACK_TAG"
+docker tag "$SOURCE_IMAGE" "$IMAGE_NAME"
+
+if ! recreate_service; then
+  log "ERROR: compose recreate failed"
+  rollback
+  exit 1
+fi
+
+# Wait up to ~60 seconds for the new Next.js container to finish migrations
+# and serve HTTP directly on the Docker network. The public proxy is not used
+# so a 200 here proves the recreated container itself is answering.
+healthy=0
+for ((attempt=1; attempt<=30; attempt++)); do
+  sleep 2
+
+  STATUS="$(docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null || true)"
+  RUNNING_IMAGE_ID="$(docker inspect -f '{{.Image}}' "$CONTAINER" 2>/dev/null || true)"
+
+  if [[ "$STATUS" == "running" && "$RUNNING_IMAGE_ID" == "$NEW_IMAGE_ID" ]]; then
+    CONTAINER_IP="$(docker inspect -f '{{with index .NetworkSettings.Networks "coolify"}}{{.IPAddress}}{{end}}' "$CONTAINER" 2>/dev/null || true)"
+    if [[ -n "$CONTAINER_IP" ]] && curl -fsS --max-time 5 "http://${CONTAINER_IP}:${HEALTH_PORT}/" >/dev/null; then
+      healthy=1
+      break
+    fi
+  fi
+done
+
+if [[ "$healthy" -ne 1 ]]; then
+  log "ERROR: new container failed health verification; rolling back"
+  rollback
+  exit 1
+fi
+
+log "Deploy successful: image=$NEW_IMAGE_ID container=$CONTAINER"
