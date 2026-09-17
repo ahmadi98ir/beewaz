@@ -6,6 +6,7 @@ import { XIcon, PhoneIcon } from '@/components/ui/icons'
 import type { ChatMessage } from '@/types/chat'
 import { MessageBubble } from './message-bubble'
 import { TypingIndicator } from './typing-indicator'
+import { useVoiceAssistant } from './use-voice-assistant'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -20,6 +21,12 @@ interface ChatConfig {
 interface GeminiMessage {
   role: 'user' | 'model'
   text: string
+}
+
+interface SendMessageOptions {
+  /** Speak the successful assistant reply only when the user explicitly
+   * initiated this turn from the microphone control. */
+  voiceReply?: boolean
 }
 
 const CONFIG_DEFAULTS: ChatConfig = {
@@ -68,6 +75,8 @@ export function ChatWidget() {
   const inputRef = useRef<HTMLInputElement>(null)
   const visitorToken = useRef('')
   const sessionId = useRef<string | undefined>(undefined)
+  const voiceSpeakRef = useRef<(text: string) => void>(() => {})
+  const voiceCancelRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     visitorToken.current = makeVisitorToken()
@@ -107,8 +116,12 @@ export function ChatWidget() {
     if (!open) setHasNewMsg(true)
   }, [open])
 
-  const sendMessage = useCallback(async (text: string) => {
+  const sendMessage = useCallback(async (text: string, options?: SendMessageOptions) => {
     if (!text.trim() || isTyping) return
+
+    // A new turn always owns the interaction. Cancel any leftover listening or
+    // speech first so voice callbacks cannot overwrite the upcoming thinking state.
+    voiceCancelRef.current()
 
     const userMsg: ChatMessage = {
       id: makeId(),
@@ -169,7 +182,16 @@ export function ChatWidget() {
       })
 
       setHistory((prev) => [...prev, { role: 'model', text: replyText }])
-      setBeeTransientState(responseIsError ? 'error' : 'speaking')
+
+      if (responseIsError) {
+        setBeeTransientState('error')
+      } else if (options?.voiceReply) {
+        // No autoplay for ordinary text chat. Audio is produced only for a turn
+        // the user explicitly started from the microphone button.
+        voiceSpeakRef.current(replyText)
+      } else {
+        setBeeTransientState('speaking')
+      }
 
       // Lead capture — detect phone number
       if (data.leadCaptured && data.phone && !leadSaved) {
@@ -199,21 +221,75 @@ export function ChatWidget() {
     }
   }, [history, isTyping, leadSaved, pushBotMessage, setBeeState, setBeeTransientState])
 
+  const voice = useVoiceAssistant()
+
+  useEffect(() => {
+    voiceSpeakRef.current = voice.speak
+    voiceCancelRef.current = voice.cancelAll
+    return () => {
+      voiceSpeakRef.current = () => {}
+      voiceCancelRef.current = () => {}
+    }
+  }, [voice.cancelAll, voice.speak])
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (inputValue.trim()) sendMessage(inputValue)
+    if (inputValue.trim()) void sendMessage(inputValue)
+  }
+
+  const handleVoiceControl = () => {
+    if (voice.phase === 'speaking') {
+      voice.stopSpeaking()
+      return
+    }
+    if (voice.phase === 'listening') {
+      voice.finishListening()
+      return
+    }
+    if (voice.phase === 'requesting-permission') {
+      voice.cancelAll()
+      return
+    }
+
+    void voice.startListening({
+      onDraft: setInputValue,
+      onFinal: (text) => {
+        void sendMessage(text, { voiceReply: true })
+      },
+    })
+  }
+
+  const handleCloseChat = () => {
+    voice.cancelAll()
+    setOpen(false)
   }
 
   const handleToggleChat = () => {
     const nextOpen = !open
-    setOpen(nextOpen)
+    if (!nextOpen) {
+      handleCloseChat()
+      setHasNewMsg(false)
+      return
+    }
+
+    setOpen(true)
     setHasNewMsg(false)
-    if (nextOpen && !isTyping && beeState === 'idle') {
+    if (!isTyping && beeState === 'idle') {
       setBeeTransientState('greeting')
     }
   }
 
   if (!configLoaded) return null
+
+  const voiceInputLocked = voice.phase === 'requesting-permission' || voice.phase === 'listening'
+  const voiceActive = voiceInputLocked || voice.phase === 'speaking'
+  const voiceButtonLabel = voice.phase === 'speaking'
+    ? 'توقف پاسخ صوتی'
+    : voice.phase === 'listening'
+      ? 'پایان شنیدن و ارسال'
+      : voice.phase === 'requesting-permission'
+        ? 'لغو درخواست میکروفون'
+        : 'شروع گفت‌وگوی صوتی فارسی'
 
   return (
     <>
@@ -245,7 +321,7 @@ export function ChatWidget() {
               <p className="text-xs text-white/70">{config.bot_status}</p>
             </div>
             <button
-              onClick={() => setOpen(false)}
+              onClick={handleCloseChat}
               className="p-1.5 rounded-xl hover:bg-white/15 transition-colors text-white/80 hover:text-white"
               aria-label="بستن چت"
             >
@@ -270,15 +346,45 @@ export function ChatWidget() {
                 type="text"
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
-                placeholder="پیام بنویسید..."
-                disabled={isTyping}
+                placeholder={voiceInputLocked ? 'در حال شنیدن…' : 'پیام بنویسید...'}
+                disabled={isTyping || voiceInputLocked}
                 dir="rtl"
                 className="flex-1 input text-sm py-2.5 px-3.5 disabled:opacity-50"
                 autoComplete="off"
               />
+              {voice.available && (
+                <button
+                  type="button"
+                  onClick={handleVoiceControl}
+                  disabled={isTyping}
+                  className={[
+                    'flex-shrink-0 w-10 h-10 rounded-xl border flex items-center justify-center transition-colors',
+                    'disabled:opacity-40 disabled:cursor-not-allowed',
+                    voiceActive
+                      ? 'bg-orange-50 border-orange-200 text-orange-700'
+                      : 'bg-white border-surface-200 text-surface-600 hover:text-brand-700 hover:border-brand-300',
+                  ].join(' ')}
+                  aria-label={voiceButtonLabel}
+                  aria-pressed={voiceActive}
+                  title="ورودی صوتی فارسی؛ فایل صوتی در سرور بیواز ذخیره نمی‌شود و تشخیص گفتار توسط مرورگر انجام می‌شود."
+                >
+                  {voiceActive ? (
+                    <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor" aria-hidden="true">
+                      <rect x="7" y="7" width="10" height="10" rx="1.5" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <rect x="9" y="2" width="6" height="12" rx="3" />
+                      <path d="M5 10a7 7 0 0 0 14 0" />
+                      <path d="M12 17v5" />
+                      <path d="M8 22h8" />
+                    </svg>
+                  )}
+                </button>
+              )}
               <button
                 type="submit"
-                disabled={isTyping || !inputValue.trim()}
+                disabled={isTyping || voiceInputLocked || !inputValue.trim()}
                 className="flex-shrink-0 w-10 h-10 rounded-xl bg-brand-600 text-white flex items-center justify-center hover:bg-brand-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 aria-label="ارسال پیام"
               >
@@ -287,6 +393,18 @@ export function ChatWidget() {
                 </svg>
               </button>
             </form>
+            {voice.statusMessage && (
+              <p
+                className={[
+                  'text-center text-xs mt-2',
+                  voice.phase === 'error' ? 'text-red-600' : 'text-surface-500',
+                ].join(' ')}
+                role="status"
+                aria-live={voice.phase === 'error' ? 'assertive' : 'polite'}
+              >
+                {voice.statusMessage}
+              </p>
+            )}
             <p className="text-center text-xs text-surface-400 mt-2">{config.footer_text}</p>
           </div>
         </div>
