@@ -38,7 +38,9 @@ const nextConfig: NextConfig = {
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           {
             key: 'Permissions-Policy',
-            value: 'camera=(), microphone=(), geolocation=(self)',
+            // Phase E: microphone is allowed only for this origin and is still
+            // user-permission gated by the browser. Camera remains disabled.
+            value: 'camera=(), microphone=(self), geolocation=(self)',
           },
           {
             key: 'Strict-Transport-Security',
