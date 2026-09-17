@@ -19,10 +19,10 @@
 > **هرگز بدون دستور صریح کاربر این فایل‌ها را تغییر نده:**
 
 ### `.github/workflows/deploy.yml`
-- workflow مسیر build/publish را انجام می‌دهد: push به `main` ← GitHub Actions ← build standalone Docker image ← push به GHCR (`ghcr.io/ahmadi98ir/beewaz-web:latest` و SHA tag).
-- R2/deploy-cache می‌تواند به‌عنوان artifact/cache باقی بماند، اما production activation دیگر به R2 وابسته نیست.
-- اگر production به build جدید سوییچ نکرد، اول bridge سمت سرور (`beewaz-autodeploy.timer` و لاگ‌های آن) بررسی شود.
-- credential یا endpoint خصوصی hard-coded به workflow اضافه نشود.
+- workflow مسیر build و publish را انجام می‌دهد: push به `main` ← GitHub Actions ← build/push image به GHCR.
+- production activation از `ghcr.io/ahmadi98ir/beewaz-web:latest` انجام می‌شود؛ R2 روی production host به‌دلیل DNS timeout قابل اتکا نیست.
+- اگر production به build جدید سوییچ نکرد، ابتدا bridge سمت سرور (`beewaz-autodeploy.timer` و لاگ‌های آن) بررسی شود.
+- از اضافه‌کردن credential یا endpoint خصوصی hard-coded به workflow خودداری شود.
 
 ### قانون merge
 - کدها روی branch توسعه داده می‌شوند.
@@ -38,23 +38,21 @@
 |------|-------|
 | پنل استقرار | Coolify |
 | FQDN سایت | `https://beewaz.ir` |
-| Production selector | Docker labels: `coolify.projectName=beewaz` + `coolify.environmentName=production` |
 | Source image | `ghcr.io/ahmadi98ir/beewaz-web:latest` |
+| Production selector | Docker labels + Coolify application metadata |
 
 ### فرآیند دیپلوی
 
-1. **Push به `main`** → GitHub Actions اپ را build می‌کند و Docker image را به GHCR با tagهای `latest` و commit SHA push می‌کند.
-2. `beewaz-autodeploy.timer` روی production هر ۲ دقیقه `/opt/beewaz-autodeploy.sh` را اجرا می‌کند.
-3. اسکریپت `ghcr.io/ahmadi98ir/beewaz-web:latest` را `docker pull` می‌کند.
-4. container production را از Docker/Coolify labels به‌صورت پویا پیدا می‌کند؛ UUID یا generated container name در repo hard-code نمی‌شود.
-5. اگر Image ID جدید با Image ID درحال اجرا یکی باشد، هیچ کاری انجام نمی‌شود.
-6. اگر image جدید باشد، image قبلی با tag محلی `beewaz-rollback:previous` نگهداری می‌شود، سپس image جدید با image-name مورد انتظار Compose tag می‌شود.
-7. فقط همان service با `--pull never --no-deps --force-recreate` recreate می‌شود.
-8. local HTTP health check روی container جدید باید پاس شود؛ در غیر این صورت image قبلی restore و service rollback می‌شود.
-
-### چرا R2 دیگر activation source نیست
-
-روی production، DNS مربوط به `*.r2.dev` قابل اتکا نیست و resolution timeout دیده شده است. در مقابل GHCR از همان سرور با موفقیت pull می‌شود. بنابراین production activation مستقیماً از GHCR انجام می‌شود و R2 فقط در صورت نیاز می‌تواند artifact/cache workflow باقی بماند.
+1. **Push به `main`** → GitHub Actions image را build و به GHCR منتشر می‌کند.
+2. `beewaz-autodeploy.timer` روی production هر ۲ دقیقه اجرا می‌شود.
+3. `/opt/beewaz-autodeploy.sh`، `ghcr.io/ahmadi98ir/beewaz-web:latest` را pull می‌کند.
+4. Coolify برای app و database یکسان `coolify.projectName=beewaz` و `coolify.environmentName=production` می‌گذارد؛ بنابراین selector باید database را حذف کند و فقط containerی را بپذیرد که:
+   - `coolify.applicationId` غیرخالی دارد، و
+   - Compose workdir آن زیر `/data/coolify/applications/` است.
+5. اگر بیش/کمتر از یک running application پیدا شود، deploy fail-closed می‌شود.
+6. اگر pulled image ID با image درحال‌اجرا برابر باشد، deploy no-op است.
+7. در image جدید، image قبلی با tag محلی `beewaz-rollback:previous` نگهداری می‌شود؛ image جدید به image-name مورد انتظار Compose tag می‌شود و فقط service Beewaz با `--pull never --no-deps --force-recreate` recreate می‌شود.
+8. local HTTP health check باید پاس شود؛ در غیر این صورت image قبلی restore و service rollback می‌شود.
 
 سرویس‌های مرتبط روی سرور:
 - `/opt/beewaz-autodeploy.sh`
@@ -64,9 +62,8 @@
 ### امنیت deployment
 - هیچ token/password/private key نباید در repo، مستندات، shell script یا log commit شود.
 - credentialهای production فقط در secret store یا root-owned env/config خارج از repo نگهداری شوند.
-- اگر credential در git history یا chat/log آشکار شد، compromised فرض و rotate شود.
-- bridge فعلی برای pull از public GHCR image به bearer token اختصاصی در script نیاز ندارد.
-- rollback image قبل از هر activation با tag محلی `beewaz-rollback:previous` نگهداری می‌شود.
+- اگر credential در git history یا chat/log آشکار شد، آن credential compromised فرض و rotate شود.
+- credentialهای قدیمی که قبلاً commit شده‌اند باید rotate شوند؛ حذف از current tree تاریخچه Git را پاک نمی‌کند.
 
 ### بررسی وضعیت deployment
 
@@ -74,7 +71,6 @@
 systemctl status beewaz-autodeploy.timer --no-pager
 systemctl status beewaz-autodeploy.service --no-pager
 journalctl -u beewaz-autodeploy.service -n 200 --no-pager
-docker image inspect ghcr.io/ahmadi98ir/beewaz-web:latest --format '{{.Id}}'
 ```
 
 ---
@@ -126,21 +122,6 @@ docker image inspect ghcr.io/ahmadi98ir/beewaz-web:latest --format '{{.Id}}'
 ```
 - شماره موبایل از **session** می‌آید (نه ورودی کاربر)
 - کد پستی: `toEnDigits()` قبل از validation (قبول هر دو فارسی و لاتین)
-
----
-
-## مشکلات رفع‌شده
-
-1. **OTP redirect loop:** `window.location.href` به جای `router.push`
-2. **جدول phone_otps:** با post-deployment Node.js script ساخته می‌شود
-3. **DNS بلاک api.sms.ir:** hardcode در `/etc/hosts` سرور
-4. **قیمت‌ها:** همه به تومان کامل (بدون اختصار)
-5. **سبد شناور:** از راست به **چپ** منتقل شد
-6. **آدرس checkout:** از یک textarea به ۶ فیلد ساختاریافته
-7. **شماره تلفن تکراری در checkout:** حذف — از session می‌آید
-8. **اعداد فارسی:** همه اعداد نمایشی با `toFaDigits()` یا `toLocaleString('fa-IR')`
-9. **چت‌بات محصولات جدید را نمی‌دید:** `getProductContext()` بر اساس `isFeatured` مرتب می‌شد نه تاریخ — به `orderBy(desc(createdAt))` با `limit(30)` تغییر کرد
-10. **auto-deploy production:** bridge قدیمی با R2/UUIDهای stale کنار گذاشته شد؛ activation اکنون با pull مستقیم `ghcr.io/ahmadi98ir/beewaz-web:latest`، discovery پویا از Coolify labels، health check و rollback خودکار انجام می‌شود.
 
 ---
 
