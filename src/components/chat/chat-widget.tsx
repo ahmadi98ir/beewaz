@@ -147,7 +147,7 @@ export function ChatWidget() {
       }
       openChat()
       setHasNewMsg(false)
-      setBeeTransientPhase('greeting', 1600, 'awaiting-voice-consent')
+      setBeeTransientPhase('greeting', 1600, 'idle')
     }, 1200)
 
     return () => {
