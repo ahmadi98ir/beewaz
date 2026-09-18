@@ -25,6 +25,7 @@ export type ChatMessage = {
   content: string
   timestamp: number
   quickReplies?: string[]
+  retryText?: string
   requirePhoneInput?: boolean
 }
 
