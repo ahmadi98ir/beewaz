@@ -6,6 +6,7 @@ import { chatSessions, chatMessages } from '@/lib/db/schema/chat'
 import { eq, and, desc, inArray, isNull } from 'drizzle-orm'
 import {
   buildStructuredSpecComparison,
+  extractCartDirective,
   findMentionedProducts,
   productAvailabilityLabel,
   type GroundedProduct,
@@ -18,6 +19,7 @@ interface ProductSnapshot extends GroundedProduct {
   slug: string
   description: string | null
   price: number
+  comparePrice: number | null
   category: string | null
   categorySlug: string | null
   warrantyDays: number
@@ -75,6 +77,7 @@ function productDetailBlock(
 async function getProductContext(lastUserText: string): Promise<{
   catalogContext: string
   mentionedContext: string
+  products: ProductSnapshot[]
 }> {
   try {
     const rows = await db
@@ -85,6 +88,7 @@ async function getProductContext(lastUserText: string): Promise<{
         slug: products.slug,
         description: products.descriptionFa,
         price: products.price,
+        comparePrice: products.comparePrice,
         stock: products.stock,
         status: products.status,
         warrantyDays: products.warrantyDays,
@@ -107,6 +111,7 @@ async function getProductContext(lastUserText: string): Promise<{
       slug: row.slug,
       description: row.description,
       price: row.price,
+      comparePrice: row.comparePrice,
       stock: row.stock,
       status: row.status === 'out_of_stock' ? 'out_of_stock' : 'active',
       warrantyDays: row.warrantyDays,
@@ -118,6 +123,7 @@ async function getProductContext(lastUserText: string): Promise<{
       return {
         catalogContext: 'دادهٔ محصولی از فروشگاه دریافت نشد؛ درباره موجودی یا قیمت حدس نزن.',
         mentionedContext: '',
+        products: [],
       }
     }
 
@@ -158,12 +164,14 @@ async function getProductContext(lastUserText: string): Promise<{
               : []),
           ].join('\n\n')
         : '',
+      products: snapshots,
     }
   } catch (error) {
     console.error('[chat] product context failed', error)
     return {
       catalogContext: 'دادهٔ محصولی از فروشگاه دریافت نشد؛ درباره موجودی یا قیمت حدس نزن.',
       mentionedContext: '',
+      products: [],
     }
   }
 }
@@ -197,6 +205,15 @@ function buildSystemPrompt(catalogContext: string, mentionedContext: string): st
 - اگر کاربر بعد از مقایسه می‌پرسد «خودت کدومو پیشنهاد میدی؟»، فقط با تکیه بر نیازهای گفته‌شده و تفاوت‌های مستند پیشنهاد بده.
 - اگر اطلاعات لازم برای انتخاب قطعی کم است، به‌جای انتخاب سلیقه‌ای حداکثر دو سؤال تعیین‌کننده بپرس (مثلاً تعداد نقاط/زون موردنیاز، نیاز به نوع ارتباط خاص، یا محدودیت بودجه).
 - در پیشنهاد نهایی، دقیقاً توضیح بده کدام نیاز کاربر به کدام مشخصهٔ ثبت‌شده وصل شده است؛ از «بهتر/حرفه‌ای‌تر/پیشرفته‌تر» بدون معیار مشخص استفاده نکن.
+- متراژ خانه به‌تنهایی برای انتخاب پنل کافی نیست. اگر کاربر مبتدی است، با زبان ساده از تعداد درهای ورودی، پنجره‌های قابل‌دسترسی، اتاق‌ها/فضاهای اصلی و ترجیح نصب سیمی/بی‌سیم کمک بگیر؛ اگر خودش نمی‌داند، توضیح بده هرکدام چه اثری در تعداد زون و سنسور دارد.
+- موجودی عددی دقیق انبار را فقط وقتی مشتری مشخصاً درباره تعداد موجودی پرسید بیان کن؛ در حالت عادی فقط «موجود» یا «ناموجود» بگو.
+
+اقدام سبد خرید:
+- تو می‌توانی با درخواست صریح مشتری، محصول را به سبد خرید همین مرورگر اضافه کنی؛ دیگر نگو «نمی‌توانم مستقیم به سبد اضافه کنم».
+- فقط وقتی آخرین پیام مشتری صریحاً درخواست افزودن/گذاشتن محصول در سبد خرید دارد، در پایان پاسخ یک خط مخفی با قالب دقیق [BEE_CART_ADD:SKU1,SKU2] اضافه کن.
+- داخل این marker فقط SKU دقیق محصولاتی را بگذار که در متن همان پاسخ صریحاً به‌عنوان ترکیب نهایی برای خرید لیست کرده‌ای و طبق کاتالوگ active و دارای stock>0 هستند.
+- اگر هنوز ترکیب خرید قطعی نیست، marker نساز و اول سؤال لازم را بپرس.
+- marker را برای توضیح، مقایسه، قیمت‌پرسیدن یا پیشنهاد عادی نساز.
 
 سبک پاسخ:
 - همیشه فارسی طبیعی و محاوره‌ایِ محترمانه پاسخ بده.
@@ -281,9 +298,28 @@ export async function POST(req: NextRequest) {
       .slice(-4)
       .map((message) => message.text)
       .join('\n')
-    const { catalogContext, mentionedContext } = await getProductContext(recentUserContext)
+    const { catalogContext, mentionedContext, products: catalogProducts } =
+      await getProductContext(recentUserContext)
     const systemPrompt = buildSystemPrompt(catalogContext, mentionedContext)
-    const reply = await chat(body.messages, systemPrompt)
+    const rawReply = await chat(body.messages, systemPrompt)
+    const { cleanText: reply, skus: cartSkus } = extractCartDirective(rawReply)
+
+    const cartItems = cartSkus
+      .map((sku) => catalogProducts.find((product) => product.sku.toUpperCase() === sku))
+      .filter((product): product is ProductSnapshot => (
+        !!product && product.status === 'active' && product.stock > 0
+      ))
+      .map((product) => ({
+        id: product.id,
+        slug: product.slug,
+        categorySlug: product.categorySlug ?? 'products',
+        nameFa: product.name,
+        sku: product.sku,
+        price: product.price,
+        comparePrice: product.comparePrice ?? undefined,
+        placeholderFrom: '#DBEAFE',
+        placeholderTo: '#BFDBFE',
+      }))
 
     // ── 4. Persist assistant response ─────────────────────────────────────────
     await db.insert(chatMessages).values({
@@ -300,6 +336,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       message: reply,
       session_id: sessionId,
+      cartItems,
       leadCaptured,
       phone: leadCaptured ? phoneMatch![0] : undefined,
     })
