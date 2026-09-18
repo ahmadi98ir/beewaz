@@ -342,9 +342,13 @@ export function useVoiceAssistant() {
     const callbacks = sessionOptionsRef.current
     if (!callbacks) return
 
+    // Never keep a raw getUserMedia VAD stream open while browser
+    // SpeechRecognition owns the microphone. Android Chrome can otherwise
+    // starve recognition or leave it stuck without transcripts.
+    stopVoiceActivityDetector()
     providerRef.current?.stopSpeaking()
     beginListeningTurn(callbacks, true)
-  }, [beginListeningTurn])
+  }, [beginListeningTurn, stopVoiceActivityDetector])
 
   useEffect(() => {
     resumeSessionRef.current = resumeSession
@@ -383,7 +387,6 @@ export function useVoiceAssistant() {
     setVoiceConsent('granted')
     setInteractionMode('voice')
     setVoiceSessionActive(true)
-    void startVoiceActivityDetector()
     beginListeningTurn(callbacks, true)
     return true
   }, [
@@ -399,7 +402,6 @@ export function useVoiceAssistant() {
     setInteractionMode,
     setVoiceConsent,
     setVoiceSessionActive,
-    startVoiceActivityDetector,
   ])
 
   const stopSession = useCallback(() => {
@@ -474,6 +476,7 @@ export function useVoiceAssistant() {
 
   const stopSpeaking = useCallback(() => {
     clearBargeInArmTimer()
+    stopVoiceActivityDetector()
     speakTokenRef.current += 1
     providerRef.current?.stopSpeaking()
     setPhase('idle')
@@ -485,7 +488,7 @@ export function useVoiceAssistant() {
     } else {
       setConversationPhase('idle')
     }
-  }, [clearBargeInArmTimer, setConversationPhase])
+  }, [clearBargeInArmTimer, setConversationPhase, stopVoiceActivityDetector])
 
   useEffect(() => {
     interruptSpeechRef.current = () => {
@@ -543,17 +546,32 @@ export function useVoiceAssistant() {
         setStatusMessage('BEE در حال پاسخ صوتی است…')
         setConversationPhase('speaking')
 
-        if (bargeInEnabled && sessionActiveRef.current && vadRef.current) {
-          clearBargeInArmTimer()
-          // Give acoustic echo cancellation time to settle before arming.
-          bargeInArmTimerRef.current = window.setTimeout(() => {
-            bargeInArmTimerRef.current = null
-            bargeInArmedRef.current = true
-          }, 700)
+        if (bargeInEnabled && sessionActiveRef.current) {
+          // VAD is deliberately acquired only while BEE is speaking. Keeping a
+          // second raw microphone stream alive during SpeechRecognition breaks
+          // recognition on some Android Chrome devices.
+          void startVoiceActivityDetector().then(() => {
+            if (
+              token !== speakTokenRef.current
+              || !sessionActiveRef.current
+              || phaseRef.current !== 'speaking'
+              || !vadRef.current
+            ) {
+              return
+            }
+
+            clearBargeInArmTimer()
+            // Give acoustic echo cancellation time to settle before arming.
+            bargeInArmTimerRef.current = window.setTimeout(() => {
+              bargeInArmTimerRef.current = null
+              bargeInArmedRef.current = true
+            }, 700)
+          })
         }
       },
       onEnd: () => {
         clearBargeInArmTimer()
+        stopVoiceActivityDetector()
         if (token !== speakTokenRef.current) return
         setPhase('idle')
         setStatusMessage(null)
@@ -569,6 +587,7 @@ export function useVoiceAssistant() {
       },
       onError: (error) => {
         clearBargeInArmTimer()
+        stopVoiceActivityDetector()
         if (token !== speakTokenRef.current) return
         failSession(error)
       },
@@ -584,6 +603,8 @@ export function useVoiceAssistant() {
     scheduleStatusClear,
     setBeeTransientState,
     setConversationPhase,
+    startVoiceActivityDetector,
+    stopVoiceActivityDetector,
   ])
 
   return {
