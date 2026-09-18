@@ -13,6 +13,7 @@ import {
 } from '@/lib/chat/product-grounding'
 import {
   assessSecurityCart,
+  classifySecurityProduct,
   securityCartGuardMessage,
   shouldEnforceSystemCompleteness,
 } from '@/lib/chat/security-system-builder'
@@ -183,7 +184,11 @@ async function getProductContext(lastUserText: string): Promise<{
 
 // ── System prompt ─────────────────────────────────────────────────────────────
 
-function buildSystemPrompt(catalogContext: string, mentionedContext: string): string {
+function buildSystemPrompt(
+  catalogContext: string,
+  mentionedContext: string,
+  cartContext: string,
+): string {
   return `تو BEE، دستیار فروش هوشمند رسمی سایت بیواز هستی. الان داخل وب‌سایت رسمی https://beewaz.ir با مشتری صحبت می‌کنی. بیواز فروشگاه تخصصی سیستم‌های امنیتی، دزدگیر، حسگر و تجهیزات هوشمند در ایران است.
 
 وظیفه‌ات:
@@ -210,6 +215,8 @@ function buildSystemPrompt(catalogContext: string, mentionedContext: string): st
 - اگر کاربر بعد از مقایسه می‌پرسد «خودت کدومو پیشنهاد میدی؟»، فقط با تکیه بر نیازهای گفته‌شده و تفاوت‌های مستند پیشنهاد بده.
 - اگر اطلاعات لازم برای انتخاب قطعی کم است، به‌جای انتخاب سلیقه‌ای حداکثر دو سؤال تعیین‌کننده بپرس (مثلاً تعداد نقاط/زون موردنیاز، نیاز به نوع ارتباط خاص، یا محدودیت بودجه).
 - در پیشنهاد نهایی، دقیقاً توضیح بده کدام نیاز کاربر به کدام مشخصهٔ ثبت‌شده وصل شده است؛ از «بهتر/حرفه‌ای‌تر/پیشرفته‌تر» بدون معیار مشخص استفاده نکن.
+- اگر کاربر می‌گوید «اونی که بهتره»، «بهتر» را مطلق تفسیر نکن. فقط مدلی را انتخاب کن که برای نیازهای همین مشتری با یک یا چند تفاوت مستند مناسب‌تر باشد و همان معیارها را نام ببر.
+- قبل از نهایی‌کردن پنل، نوع اتصال سنسورهای پیشنهادی (سیمی/بی‌سیم) را با ظرفیت زون‌های ثبت‌شده پنل تطبیق بده. اگر تعداد حسگرهای سیمی از تعداد زون‌های سیمی بیشتر است، بدون توضیح درباره طراحی زون/گروه‌بندی یا جایگزین بی‌سیم ادعای «کامل و آماده نصب» نکن.
 - متراژ خانه به‌تنهایی برای انتخاب پنل کافی نیست. اگر کاربر مبتدی است، با زبان ساده از تعداد درهای ورودی، پنجره‌های قابل‌دسترسی، اتاق‌ها/فضاهای اصلی و ترجیح نصب سیمی/بی‌سیم کمک بگیر؛ اگر خودش نمی‌داند، توضیح بده هرکدام چه اثری در تعداد زون و سنسور دارد.
 - موجودی عددی دقیق انبار را فقط وقتی مشتری مشخصاً درباره تعداد موجودی پرسید بیان کن؛ در حالت عادی فقط «موجود» یا «ناموجود» بگو.
 
@@ -231,6 +238,15 @@ function buildSystemPrompt(catalogContext: string, mentionedContext: string): st
 - اگر مشتری یک سیستم کامل/پکیج حفاظتی می‌خواهد، marker نباید فقط شامل پنل باشد؛ حداقل باید حسگر تشخیص نفوذ مناسب هم در ترکیب نهایی وجود داشته باشد.
 - اگر هنوز تعداد/نوع حسگر لازم مشخص نیست، marker نساز و اول سؤال کوتاه لازم را بپرس یا فرض پکیج پایه را صریحاً اعلام کن و تأیید بگیر.
 - marker را برای توضیح، مقایسه، قیمت‌پرسیدن یا پیشنهاد عادی نساز.
+- اگر یک «ترکیب نهایی خرید» را در متن می‌نویسی و cart action می‌سازی، marker باید همهٔ اقلام همان ترکیب نهایی را با همان تعداد شامل شود. حذف پنل یا یکی از اجزای اصلی از marker ممنوع است.
+
+وضعیت فعلی سبد خرید مشتری:
+${cartContext}
+
+قواعد سبد فعلی:
+- فرض نکن سبد خالی است.
+- اگر سبد فعلی پنل دیگری دارد و مشتری فقط می‌گوید «این پکیج را اضافه کن»، به او بگو محصول قبلی در سبد باقی می‌ماند مگر اینکه خودش درخواست جایگزینی/حذف بدهد.
+- فعلاً cart action فقط افزودن انجام می‌دهد؛ درباره حذف یا جایگزینی ادعای انجام‌شدن نکن.
 
 سبک پاسخ:
 - همیشه فارسی طبیعی و محاوره‌ایِ محترمانه پاسخ بده.
@@ -284,6 +300,11 @@ interface ChatRequest {
   messages: { role: 'user' | 'model'; text: string }[]
   session_id?: string
   visitorToken?: string
+  cart?: Array<{
+    sku: string
+    nameFa: string
+    quantity: number
+  }>
 }
 
 export async function POST(req: NextRequest) {
@@ -317,11 +338,19 @@ export async function POST(req: NextRequest) {
       .join('\n')
     const { catalogContext, mentionedContext, products: catalogProducts } =
       await getProductContext(recentUserContext)
-    const systemPrompt = buildSystemPrompt(catalogContext, mentionedContext)
+
+    const currentCart = Array.isArray(body.cart) ? body.cart.slice(0, 50) : []
+    const cartContext = currentCart.length > 0
+      ? currentCart
+          .map((item) => `- ${item.sku} | ${item.nameFa} | تعداد: ${Math.max(1, item.quantity || 1)}`)
+          .join('\n')
+      : '- سبد خرید فعلاً خالی است.'
+
+    const systemPrompt = buildSystemPrompt(catalogContext, mentionedContext, cartContext)
     const rawReply = await chat(body.messages, systemPrompt)
     const { cleanText, items: requestedCartItems } = extractCartDirective(rawReply)
 
-    const validatedSelections = requestedCartItems
+    let validatedSelections = requestedCartItems
       .map(({ sku, quantity }) => {
         const product = catalogProducts.find(
           (candidate) => candidate.sku.toUpperCase() === sku,
@@ -335,6 +364,45 @@ export async function POST(req: NextRequest) {
       })
       .filter((selection): selection is { product: ProductSnapshot; quantity: number } => !!selection)
 
+    const enforceCompleteness = shouldEnforceSystemCompleteness(recentUserContext)
+
+    // LLMs occasionally list the chosen panel in the visible "final package"
+    // but omit it from the hidden cart marker. For full-system intents, recover
+    // exactly one explicitly mentioned in-stock panel from the same reply.
+    if (enforceCompleteness) {
+      const selectedHasPanel = validatedSelections.some(
+        ({ product }) => classifySecurityProduct({
+          sku: product.sku,
+          name: product.name,
+          category: product.category,
+          categorySlug: product.categorySlug,
+          description: product.description,
+        }) === 'panel',
+      )
+
+      if (!selectedHasPanel) {
+        const mentionedPanels = findMentionedProducts(cleanText, catalogProducts)
+          .filter((product) => (
+            product.status === 'active'
+            && product.stock > 0
+            && classifySecurityProduct({
+              sku: product.sku,
+              name: product.name,
+              category: product.category,
+              categorySlug: product.categorySlug,
+              description: product.description,
+            }) === 'panel'
+          ))
+
+        if (mentionedPanels.length === 1) {
+          validatedSelections = [
+            { product: mentionedPanels[0]!, quantity: 1 },
+            ...validatedSelections,
+          ]
+        }
+      }
+    }
+
     const securityAssessment = assessSecurityCart(
       validatedSelections.map(({ product, quantity }) => ({
         sku: product.sku,
@@ -346,7 +414,6 @@ export async function POST(req: NextRequest) {
       })),
     )
 
-    const enforceCompleteness = shouldEnforceSystemCompleteness(recentUserContext)
     const cartGuard = enforceCompleteness
       ? securityCartGuardMessage(securityAssessment)
       : null
