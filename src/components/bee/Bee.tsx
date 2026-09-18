@@ -61,7 +61,12 @@ function DevStatePreview({
 }
 
 export function Bee() {
-  const { state: liveState } = useBeeChatState()
+  const {
+    state: liveState,
+    chatOpen,
+    openChat,
+    setTransientState,
+  } = useBeeChatState()
   const [tier, setTier] = useState<BeeTier | null>(null)
   const [Scene, setScene] = useState<ComponentType<BeeSceneProps> | null>(null)
   const [canvasReady, setCanvasReady] = useState(false)
@@ -118,6 +123,17 @@ export function Bee() {
     ? previewState
     : liveState
 
+  const handleBeeActivate = () => {
+    if (chatOpen) return
+    try {
+      window.sessionStorage.setItem('beewaz_auto_greeted', '1')
+    } catch {
+      // Best effort only.
+    }
+    openChat()
+    setTransientState('greeting', 1400)
+  }
+
   return (
     <div
       ref={wrapperRef}
@@ -127,6 +143,14 @@ export function Bee() {
       {process.env.NODE_ENV !== 'production' && (
         <DevStatePreview state={previewState} onChange={setPreviewState} />
       )}
+      <button
+        type="button"
+        onClick={handleBeeActivate}
+        disabled={chatOpen}
+        className="absolute inset-0 z-10 rounded-full pointer-events-auto cursor-pointer bg-transparent disabled:cursor-default focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2"
+        aria-label={chatOpen ? 'گفت‌وگو با BEE باز است' : 'باز کردن گفت‌وگو با BEE'}
+        title={chatOpen ? undefined : 'گفت‌وگو با BEE'}
+      />
       <BeeFallback
         state={state}
         opacity={show3D && canvasReady ? 0 : 1}
