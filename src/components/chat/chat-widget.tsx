@@ -211,6 +211,7 @@ export function ChatWidget() {
           sku: string
           price: number
           comparePrice?: number
+          quantity: number
           placeholderFrom: string
           placeholderTo: string
         }>
@@ -248,7 +249,13 @@ export function ChatWidget() {
         setHistory([...newHistory, { role: 'model', text: replyText }])
 
         if (data.cartItems && data.cartItems.length > 0) {
-          data.cartItems.forEach((item) => addCartItem(item))
+          data.cartItems.forEach((item) => {
+            const quantity = Math.max(1, Math.min(20, item.quantity || 1))
+            const { quantity: _quantity, ...cartItem } = item
+            for (let index = 0; index < quantity; index += 1) {
+              addCartItem(cartItem)
+            }
+          })
           openCart()
         }
       }
