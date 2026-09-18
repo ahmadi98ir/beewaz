@@ -181,6 +181,9 @@ function buildSystemPrompt(catalogContext: string, mentionedContext: string): st
 - اگر مشتری گفت «روی سایت هست/موجوده»، نگو اطلاعاتی درباره سایت نداری؛ تو دستیار خود beewaz.ir هستی. وضعیت همان محصول را از دادهٔ زیر توضیح بده.
 - اگر دادهٔ محصول در دسترس نبود، صریح بگو امکان تأیید موجودی لحظه‌ای نداری و حدس نزن.
 - اگر بخش «محصول‌های تشخیص‌داده‌شده» وجود دارد، حقایق آن بخش بر هر برداشت قبلی یا حدس اولویت دارند.
+- اگر کاربر بعد از مقایسه می‌پرسد «خودت کدومو پیشنهاد میدی؟»، فقط با تکیه بر نیازهای گفته‌شده و تفاوت‌های مستند پیشنهاد بده.
+- اگر اطلاعات لازم برای انتخاب قطعی کم است، به‌جای انتخاب سلیقه‌ای حداکثر دو سؤال تعیین‌کننده بپرس (مثلاً تعداد نقاط/زون موردنیاز، نیاز به نوع ارتباط خاص، یا محدودیت بودجه).
+- در پیشنهاد نهایی، دقیقاً توضیح بده کدام نیاز کاربر به کدام مشخصهٔ ثبت‌شده وصل شده است؛ از «بهتر/حرفه‌ای‌تر/پیشرفته‌تر» بدون معیار مشخص استفاده نکن.
 
 سبک پاسخ:
 - همیشه فارسی طبیعی و محاوره‌ایِ محترمانه پاسخ بده.
@@ -258,7 +261,14 @@ export async function POST(req: NextRequest) {
     }
 
     // ── 3. Build context and call AI ─────────────────────────────────────────
-    const { catalogContext, mentionedContext } = await getProductContext(lastUserMsg?.text ?? '')
+    // Keep product/spec grounding alive across short follow-up turns such as
+    // «خودت کدومو پیشنهاد میدی؟» where the model names are omitted.
+    const recentUserContext = body.messages
+      .filter((message) => message.role === 'user')
+      .slice(-4)
+      .map((message) => message.text)
+      .join('\n')
+    const { catalogContext, mentionedContext } = await getProductContext(recentUserContext)
     const systemPrompt = buildSystemPrompt(catalogContext, mentionedContext)
     const reply = await chat(body.messages, systemPrompt)
 
