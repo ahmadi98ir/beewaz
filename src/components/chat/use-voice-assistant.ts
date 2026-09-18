@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBeeChatState } from '@/components/bee/BeeChatState'
 import { BrowserVoiceProvider } from '@/lib/voice/browser-voice-provider'
 import { BrowserVoiceActivityDetector } from '@/lib/voice/browser-voice-activity-detector'
+import { mergeSpeechTranscript } from '@/lib/voice/transcript-merger'
 import {
   VoiceProviderError,
   voiceErrorMessageFa,
@@ -243,8 +244,8 @@ export function useVoiceAssistant() {
     clearTurnSilenceTimer()
     const token = ++listenTokenRef.current
     let failed = false
-    let latestTranscript = ''
-    const finalChunks: string[] = []
+    let committedTranscript = ''
+    let latestInterim = ''
 
     try {
       provider.startListening({
@@ -259,9 +260,17 @@ export function useVoiceAssistant() {
         },
         onTranscript: ({ text, isFinal }) => {
           if (token !== listenTokenRef.current) return
-          latestTranscript = text
-          if (isFinal) finalChunks.push(text)
-          const draft = [...finalChunks, ...(isFinal ? [] : [text])].join(' ').trim()
+
+          if (isFinal) {
+            committedTranscript = mergeSpeechTranscript(committedTranscript, text)
+            latestInterim = ''
+          } else {
+            latestInterim = text
+          }
+
+          const draft = isFinal
+            ? committedTranscript
+            : mergeSpeechTranscript(committedTranscript, latestInterim)
           if (draft) callbacks.onDraft(draft)
 
           if (keepAlive && sessionActiveRef.current) {
@@ -300,7 +309,7 @@ export function useVoiceAssistant() {
           clearTurnSilenceTimer()
           if (token !== listenTokenRef.current || failed) return
 
-          const finalText = (finalChunks.join(' ') || latestTranscript).trim()
+          const finalText = mergeSpeechTranscript(committedTranscript, latestInterim).trim()
           if (finalText) {
             setPhase('idle')
             setStatusMessage('پیامت رو گرفتم؛ BEE داره فکر می‌کنه…')
