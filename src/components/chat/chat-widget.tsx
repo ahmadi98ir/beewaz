@@ -80,6 +80,7 @@ export function ChatWidget() {
   const [hasNewMsg, setHasNewMsg] = useState(false)
   const addCartItem = useCart((state) => state.addItem)
   const openCart = useCart((state) => state.openCart)
+  const currentCartItems = useCart((state) => state.items)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -193,6 +194,11 @@ export function ChatWidget() {
           messages: newHistory,
           session_id: sessionId.current,
           visitorToken: visitorToken.current,
+          cart: currentCartItems.map((item) => ({
+            sku: item.sku,
+            nameFa: item.nameFa,
+            quantity: item.quantity,
+          })),
         }),
       })
 
@@ -304,6 +310,7 @@ export function ChatWidget() {
     }
   }, [
     addCartItem,
+    currentCartItems,
     history,
     isTyping,
     leadSaved,

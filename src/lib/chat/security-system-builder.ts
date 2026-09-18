@@ -60,7 +60,7 @@ export interface SecurityCartAssessment {
   hasMotionSensor: boolean
   hasOpeningSensor: boolean
   hasAudibleAlarm: boolean
-  missingRequired: Array<'intrusion_detection'>
+  missingRequired: Array<'central_panel' | 'intrusion_detection'>
   advisories: string[]
 }
 
@@ -86,7 +86,11 @@ export function assessSecurityCart(
   const missingRequired: SecurityCartAssessment['missingRequired'] = []
   const advisories: string[] = []
 
-  if (hasPanel && !hasDetection) {
+  if (!hasPanel) {
+    missingRequired.push('central_panel')
+  }
+
+  if (!hasDetection) {
     missingRequired.push('intrusion_detection')
   }
 
@@ -110,6 +114,10 @@ export function assessSecurityCart(
 export function securityCartGuardMessage(
   assessment: SecurityCartAssessment,
 ): string | null {
+  if (assessment.missingRequired.includes('central_panel')) {
+    return 'برای اینکه یک سیستم ناقص به سبدت اضافه نکنم، فعلاً افزودن به سبد انجام نشد. ترکیب نهایی سیستم حفاظتی باید یک پنل مرکزی مشخص هم داشته باشد.'
+  }
+
   if (assessment.missingRequired.includes('intrusion_detection')) {
     return 'برای اینکه یک سیستم ناقص به سبدت اضافه نکنم، فعلاً افزودن به سبد انجام نشد. پنل مرکزی به‌تنهایی دزدگیر کامل نیست و حداقل باید حسگر تشخیص نفوذ مناسب (مثل چشمی حرکتی و/یا مگنت در و پنجره) هم با تعداد متناسب با نقاط حفاظتی انتخاب شود.'
   }
@@ -129,4 +137,14 @@ export function shouldEnforceSystemCompleteness(conversationText: string): boole
   if (explicitPanelOnly) return false
 
   return /(سیستم|پکیج|کامل|خونه|خانه|آپارتمان|ویلا|سنسور|حسگر|امنیت|حفاظت|راهنما|هیچی.*سر.*در|لازم|نیاز)/i.test(normalized)
+}
+
+
+export function hasSecurityRole(
+  products: readonly CartSelectionProduct[],
+  role: SecurityProductRole,
+): boolean {
+  return products.some(
+    (product) => product.quantity > 0 && classifySecurityProduct(product) === role,
+  )
 }
