@@ -181,7 +181,6 @@ export function ChatWidget() {
     setBeeState('thinking')
 
     const newHistory: GeminiMessage[] = [...history, { role: 'user', text: text.trim() }]
-    setHistory(newHistory)
 
     try {
       const res = await fetch('/api/chat', {
@@ -194,12 +193,19 @@ export function ChatWidget() {
         }),
       })
 
-      const data = await res.json() as {
-        message: string
+      const responseText = await res.text()
+      let data: {
+        message?: string
         session_id?: string
         leadCaptured?: boolean
         phone?: string
         error?: string
+      }
+
+      try {
+        data = JSON.parse(responseText) as typeof data
+      } catch {
+        throw new Error(`Chat API returned non-JSON response (HTTP ${res.status})`)
       }
 
       if (data.session_id) {
@@ -209,19 +215,24 @@ export function ChatWidget() {
 
       setIsTyping(false)
 
-      const replyText = data.error ?? data.message
-      const responseIsError = !res.ok || !!data.error
+      const responseIsError = !res.ok || !!data.error || !data.message
+      const replyText = responseIsError
+        ? (data.error ?? 'سرویس مشاوره موقتاً در دسترس نیست. لطفاً دوباره تلاش کنید.')
+        : data.message!
 
-      // Do not turn numbered product/comparison lines into quick-reply buttons.
-      // That duplicated the same recommendations underneath the assistant reply.
+      // Failed turns are deliberately not written into model history. This keeps
+      // a retry from becoming "question → error text → same question" context.
       pushBotMessage({
         id: makeId(),
         role: 'bot',
         content: replyText,
         timestamp: Date.now(),
+        retryText: responseIsError ? text.trim() : undefined,
       })
 
-      setHistory((prev) => [...prev, { role: 'model', text: replyText }])
+      if (!responseIsError) {
+        setHistory([...newHistory, { role: 'model', text: replyText }])
+      }
 
       if (responseIsError) {
         setBeeTransientState('error')
@@ -237,7 +248,7 @@ export function ChatWidget() {
       }
 
       // Lead capture — detect phone number
-      if (data.leadCaptured && data.phone && !leadSaved) {
+      if (!responseIsError && data.leadCaptured && data.phone && !leadSaved) {
         setLeadSaved(true)
         const phone = data.phone.replace(/\D/g, '')
         const normalized = phone.startsWith('98') ? '0' + phone.slice(2) : phone.startsWith('9') ? '0' + phone : phone
@@ -260,9 +271,9 @@ export function ChatWidget() {
       pushBotMessage({
         id: makeId(),
         role: 'bot',
-        content: 'مشکلی پیش آمد. لطفاً دوباره تلاش کنید.',
+        content: 'ارتباط با BEE موقتاً قطع شد. می‌تونی همان سؤال را دوباره بفرستی.',
         timestamp: Date.now(),
-        quickReplies: ['تلاش مجدد'],
+        retryText: text.trim(),
       })
     }
   }, [history, isTyping, leadSaved, pushBotMessage, setBeeState, setBeeTransientState, setInteractionMode])
