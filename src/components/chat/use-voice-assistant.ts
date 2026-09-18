@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useBeeChatState } from '@/components/bee/BeeChatState'
 import { BrowserVoiceProvider } from '@/lib/voice/browser-voice-provider'
+import { BrowserVoiceActivityDetector } from '@/lib/voice/browser-voice-activity-detector'
 import {
   VoiceProviderError,
   voiceErrorMessageFa,
@@ -17,6 +18,7 @@ interface VoiceRuntimeConfig {
   provider: 'browser' | 'disabled'
   language?: string
   handsFree?: boolean
+  bargeIn?: boolean
   turnSilenceMs?: number
 }
 
@@ -43,11 +45,13 @@ export function useVoiceAssistant() {
   const [enabled, setEnabled] = useState(false)
   const [available, setAvailable] = useState(false)
   const [handsFreeEnabled, setHandsFreeEnabled] = useState(false)
+  const [bargeInEnabled, setBargeInEnabled] = useState(false)
   const [sessionActive, setSessionActive] = useState(false)
   const [phase, setPhase] = useState<VoicePhase>('idle')
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
 
   const providerRef = useRef<VoiceProvider | null>(null)
+  const vadRef = useRef<BrowserVoiceActivityDetector | null>(null)
   const languageRef = useRef(LANGUAGE)
   const permissionGrantedRef = useRef(false)
   const sessionActiveRef = useRef(false)
@@ -57,8 +61,12 @@ export function useVoiceAssistant() {
   const messageTimerRef = useRef<number | null>(null)
   const restartTimerRef = useRef<number | null>(null)
   const turnSilenceTimerRef = useRef<number | null>(null)
+  const bargeInArmTimerRef = useRef<number | null>(null)
   const turnSilenceMsRef = useRef(1200)
+  const bargeInArmedRef = useRef(false)
+  const phaseRef = useRef<VoicePhase>('idle')
   const resumeSessionRef = useRef<() => void>(() => {})
+  const interruptSpeechRef = useRef<() => void>(() => {})
 
   const clearMessageTimer = useCallback(() => {
     if (messageTimerRef.current !== null) {
@@ -81,10 +89,50 @@ export function useVoiceAssistant() {
     }
   }, [])
 
+  const clearBargeInArmTimer = useCallback(() => {
+    if (bargeInArmTimerRef.current !== null) {
+      window.clearTimeout(bargeInArmTimerRef.current)
+      bargeInArmTimerRef.current = null
+    }
+    bargeInArmedRef.current = false
+  }, [])
+
+  const stopVoiceActivityDetector = useCallback(() => {
+    clearBargeInArmTimer()
+    vadRef.current?.stop()
+    vadRef.current = null
+  }, [clearBargeInArmTimer])
+
+  const startVoiceActivityDetector = useCallback(async () => {
+    if (!bargeInEnabled || vadRef.current || !BrowserVoiceActivityDetector.isSupported()) return
+
+    const detector = new BrowserVoiceActivityDetector({
+      // A slightly conservative profile reduces false interruption from BEE's own
+      // speaker audio; echoCancellation/noiseSuppression are also requested.
+      minThreshold: 0.035,
+      thresholdMultiplier: 3.4,
+      minSpeechMs: 260,
+      hangoverMs: 420,
+      onSpeechStart: () => interruptSpeechRef.current(),
+    })
+    vadRef.current = detector
+
+    try {
+      await detector.start()
+    } catch {
+      detector.stop()
+      if (vadRef.current === detector) vadRef.current = null
+    }
+  }, [bargeInEnabled])
+
   const setVoiceSessionActive = useCallback((active: boolean) => {
     sessionActiveRef.current = active
     setSessionActive(active)
   }, [])
+
+  useEffect(() => {
+    phaseRef.current = phase
+  }, [phase])
 
   const scheduleStatusClear = useCallback((durationMs = 2600) => {
     clearMessageTimer()
@@ -98,6 +146,7 @@ export function useVoiceAssistant() {
   const failSession = useCallback((error: VoiceProviderError) => {
     clearRestartTimer()
     clearTurnSilenceTimer()
+    stopVoiceActivityDetector()
     setVoiceSessionActive(false)
     sessionOptionsRef.current = null
     listenTokenRef.current += 1
@@ -122,6 +171,7 @@ export function useVoiceAssistant() {
     clearRestartTimer,
     clearTurnSilenceTimer,
     scheduleStatusClear,
+    stopVoiceActivityDetector,
     setBeeTransientState,
     setConversationPhase,
     setInteractionMode,
@@ -140,6 +190,7 @@ export function useVoiceAssistant() {
         const isEnabled = config.enabled && config.provider === 'browser'
         setEnabled(isEnabled)
         setHandsFreeEnabled(isEnabled && config.handsFree !== false)
+        setBargeInEnabled(isEnabled && config.handsFree !== false && config.bargeIn === true)
         if (!isEnabled) return
 
         languageRef.current = config.language || LANGUAGE
@@ -155,6 +206,7 @@ export function useVoiceAssistant() {
           setEnabled(false)
           setAvailable(false)
           setHandsFreeEnabled(false)
+          setBargeInEnabled(false)
         }
       })
 
@@ -165,11 +217,17 @@ export function useVoiceAssistant() {
       speakTokenRef.current += 1
       clearRestartTimer()
       clearTurnSilenceTimer()
+      stopVoiceActivityDetector()
       provider?.destroy()
       if (providerRef.current === provider) providerRef.current = null
       clearMessageTimer()
     }
-  }, [clearMessageTimer, clearRestartTimer, clearTurnSilenceTimer])
+  }, [
+    clearMessageTimer,
+    clearRestartTimer,
+    clearTurnSilenceTimer,
+    stopVoiceActivityDetector,
+  ])
 
   const beginListeningTurn = useCallback((
     callbacks: StartListeningOptions,
@@ -325,6 +383,7 @@ export function useVoiceAssistant() {
     setVoiceConsent('granted')
     setInteractionMode('voice')
     setVoiceSessionActive(true)
+    void startVoiceActivityDetector()
     beginListeningTurn(callbacks, true)
     return true
   }, [
@@ -340,6 +399,7 @@ export function useVoiceAssistant() {
     setInteractionMode,
     setVoiceConsent,
     setVoiceSessionActive,
+    startVoiceActivityDetector,
   ])
 
   const stopSession = useCallback(() => {
@@ -347,6 +407,7 @@ export function useVoiceAssistant() {
     sessionOptionsRef.current = null
     clearRestartTimer()
     clearTurnSilenceTimer()
+    stopVoiceActivityDetector()
     listenTokenRef.current += 1
     speakTokenRef.current += 1
     providerRef.current?.destroy()
@@ -358,6 +419,7 @@ export function useVoiceAssistant() {
     clearRestartTimer,
     clearTurnSilenceTimer,
     setConversationPhase,
+    stopVoiceActivityDetector,
     setInteractionMode,
     setVoiceSessionActive,
   ])
@@ -411,6 +473,7 @@ export function useVoiceAssistant() {
   ])
 
   const stopSpeaking = useCallback(() => {
+    clearBargeInArmTimer()
     speakTokenRef.current += 1
     providerRef.current?.stopSpeaking()
     setPhase('idle')
@@ -422,7 +485,28 @@ export function useVoiceAssistant() {
     } else {
       setConversationPhase('idle')
     }
-  }, [setConversationPhase])
+  }, [clearBargeInArmTimer, setConversationPhase])
+
+  useEffect(() => {
+    interruptSpeechRef.current = () => {
+      if (
+        !bargeInEnabled
+        || !bargeInArmedRef.current
+        || !sessionActiveRef.current
+        || phaseRef.current !== 'speaking'
+      ) {
+        return
+      }
+
+      bargeInArmedRef.current = false
+      stopSpeaking()
+      setStatusMessage('صدات رو شنیدم؛ BEE گوش می‌ده…')
+    }
+
+    return () => {
+      interruptSpeechRef.current = () => {}
+    }
+  }, [bargeInEnabled, stopSpeaking])
 
   const speak = useCallback((text: string) => {
     const provider = providerRef.current
@@ -431,6 +515,7 @@ export function useVoiceAssistant() {
     clearMessageTimer()
     clearRestartTimer()
     clearTurnSilenceTimer()
+    clearBargeInArmTimer()
     const token = ++speakTokenRef.current
 
     if (!provider.canSpeak()) {
@@ -457,8 +542,18 @@ export function useVoiceAssistant() {
         setPhase('speaking')
         setStatusMessage('BEE در حال پاسخ صوتی است…')
         setConversationPhase('speaking')
+
+        if (bargeInEnabled && sessionActiveRef.current && vadRef.current) {
+          clearBargeInArmTimer()
+          // Give acoustic echo cancellation time to settle before arming.
+          bargeInArmTimerRef.current = window.setTimeout(() => {
+            bargeInArmTimerRef.current = null
+            bargeInArmedRef.current = true
+          }, 700)
+        }
       },
       onEnd: () => {
+        clearBargeInArmTimer()
         if (token !== speakTokenRef.current) return
         setPhase('idle')
         setStatusMessage(null)
@@ -473,11 +568,14 @@ export function useVoiceAssistant() {
         }
       },
       onError: (error) => {
+        clearBargeInArmTimer()
         if (token !== speakTokenRef.current) return
         failSession(error)
       },
     })
   }, [
+    bargeInEnabled,
+    clearBargeInArmTimer,
     clearMessageTimer,
     clearRestartTimer,
     clearTurnSilenceTimer,
@@ -492,6 +590,7 @@ export function useVoiceAssistant() {
     enabled,
     available,
     handsFreeEnabled,
+    bargeInEnabled,
     sessionActive,
     phase,
     statusMessage,

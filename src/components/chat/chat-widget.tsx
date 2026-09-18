@@ -455,7 +455,9 @@ export function ChatWidget() {
             {voice.sessionActive && (
               <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-orange-100 bg-orange-50/70 px-3 py-2">
                 <span className="text-xs font-semibold text-orange-800">
-                  ● گفت‌وگوی صوتی با BEE فعال است
+                  {voice.bargeInEnabled
+                    ? '● گفت‌وگوی صوتی فعال است — می‌تونی وسط حرف BEE صحبت کنی'
+                    : '● گفت‌وگوی صوتی با BEE فعال است'}
                 </span>
                 <button
                   type="button"
