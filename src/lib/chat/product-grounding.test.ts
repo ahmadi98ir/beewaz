@@ -21,6 +21,11 @@ describe('product grounding helpers', () => {
     expect(matches.map((product) => product.sku)).toEqual(['BH21'])
   })
 
+  it('recovers PH model codes produced by mobile STT', () => {
+    const matches = findMentionedProducts('مدل BH۲۱ با PH۲۰ چه فرقی دارند؟', PRODUCTS)
+    expect(matches.map((product) => product.sku)).toEqual(['BH20', 'BH21'])
+  })
+
   it('distinguishes visible zero-stock products from purchasable products', () => {
     expect(productAvailabilityLabel(PRODUCTS[0]!)).toContain('موجود برای خرید')
     expect(productAvailabilityLabel({ ...PRODUCTS[1]!, stock: 0 })).toBe(
