@@ -97,6 +97,7 @@ export function useVoiceAssistant() {
 
   const failSession = useCallback((error: VoiceProviderError) => {
     clearRestartTimer()
+    clearTurnSilenceTimer()
     setVoiceSessionActive(false)
     sessionOptionsRef.current = null
     listenTokenRef.current += 1
@@ -119,6 +120,7 @@ export function useVoiceAssistant() {
     scheduleStatusClear()
   }, [
     clearRestartTimer,
+    clearTurnSilenceTimer,
     scheduleStatusClear,
     setBeeTransientState,
     setConversationPhase,
@@ -158,7 +160,7 @@ export function useVoiceAssistant() {
 
     return () => {
       cancelled = true
-      setVoiceSessionActive(false)
+      sessionActiveRef.current = false
       listenTokenRef.current += 1
       speakTokenRef.current += 1
       clearRestartTimer()
@@ -167,7 +169,7 @@ export function useVoiceAssistant() {
       if (providerRef.current === provider) providerRef.current = null
       clearMessageTimer()
     }
-  }, [clearMessageTimer, clearRestartTimer, clearTurnSilenceTimer, setVoiceSessionActive])
+  }, [clearMessageTimer, clearRestartTimer, clearTurnSilenceTimer])
 
   const beginListeningTurn = useCallback((
     callbacks: StartListeningOptions,
