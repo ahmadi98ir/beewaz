@@ -177,7 +177,6 @@ export function useVoiceAssistant() {
     setInteractionMode,
     setVoiceConsent,
     setVoiceSessionActive,
-    startVoiceActivityDetector,
   ])
 
   useEffect(() => {
@@ -390,8 +389,6 @@ export function useVoiceAssistant() {
   }, [
     available,
     beginListeningTurn,
-    bargeInEnabled,
-    clearBargeInArmTimer,
     clearMessageTimer,
     clearRestartTimer,
     clearTurnSilenceTimer,
@@ -402,6 +399,7 @@ export function useVoiceAssistant() {
     setInteractionMode,
     setVoiceConsent,
     setVoiceSessionActive,
+    startVoiceActivityDetector,
   ])
 
   const stopSession = useCallback(() => {
@@ -576,6 +574,8 @@ export function useVoiceAssistant() {
       },
     })
   }, [
+    bargeInEnabled,
+    clearBargeInArmTimer,
     clearMessageTimer,
     clearRestartTimer,
     clearTurnSilenceTimer,
