@@ -108,31 +108,48 @@ export function buildStructuredSpecComparison<T extends ComparableProduct>(
 }
 
 
+export interface CartDirectiveItem {
+  sku: string
+  quantity: number
+}
+
 export interface CartDirective {
   cleanText: string
-  skus: string[]
+  items: CartDirectiveItem[]
 }
 
 /**
  * Parses the hidden cart action marker emitted by BEE and strips it from the
- * user-visible reply. The marker is intentionally narrow so arbitrary model
- * text can never mutate the cart.
+ * user-visible reply.
+ *
+ * Supported forms:
+ *   [BEE_CART_ADD:BH21,P100]
+ *   [BEE_CART_ADD:BH21*1,P100*2,MG10*3]
+ *
+ * Quantity is clamped to 1..20. Duplicate SKUs are merged. The narrow grammar
+ * prevents arbitrary model text from becoming cart mutations.
  */
 export function extractCartDirective(text: string): CartDirective {
   const matches = Array.from(text.matchAll(/\[BEE_CART_ADD:([^\]]+)\]/gi))
   if (matches.length === 0) {
-    return { cleanText: text.trim(), skus: [] }
+    return { cleanText: text.trim(), items: [] }
   }
 
-  const skus = Array.from(new Set(
-    matches
-      .flatMap((match) => (match[1] ?? '').split(','))
-      .map((sku) => sku.trim().toUpperCase())
-      .filter((sku) => /^[A-Z0-9_-]{2,32}$/.test(sku)),
-  ))
+  const quantities = new Map<string, number>()
+
+  for (const token of matches.flatMap((match) => (match[1] ?? '').split(','))) {
+    const trimmed = token.trim().toUpperCase()
+    const parsed = trimmed.match(/^([A-Z0-9_-]{2,32})(?:\*(\d{1,2}))?$/)
+    if (!parsed) continue
+
+    const sku = parsed[1]!
+    const rawQuantity = parsed[2] ? Number.parseInt(parsed[2], 10) : 1
+    const quantity = Math.min(20, Math.max(1, Number.isFinite(rawQuantity) ? rawQuantity : 1))
+    quantities.set(sku, Math.min(20, (quantities.get(sku) ?? 0) + quantity))
+  }
 
   return {
     cleanText: text.replace(/\s*\[BEE_CART_ADD:[^\]]+\]\s*/gi, '\n').trim(),
-    skus,
+    items: Array.from(quantities, ([sku, quantity]) => ({ sku, quantity })),
   }
 }

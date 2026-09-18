@@ -11,6 +11,11 @@ import {
   productAvailabilityLabel,
   type GroundedProduct,
 } from '@/lib/chat/product-grounding'
+import {
+  assessSecurityCart,
+  securityCartGuardMessage,
+  shouldEnforceSystemCompleteness,
+} from '@/lib/chat/security-system-builder'
 
 // ── Product context for system prompt ─────────────────────────────────────────
 
@@ -208,11 +213,23 @@ function buildSystemPrompt(catalogContext: string, mentionedContext: string): st
 - متراژ خانه به‌تنهایی برای انتخاب پنل کافی نیست. اگر کاربر مبتدی است، با زبان ساده از تعداد درهای ورودی، پنجره‌های قابل‌دسترسی، اتاق‌ها/فضاهای اصلی و ترجیح نصب سیمی/بی‌سیم کمک بگیر؛ اگر خودش نمی‌داند، توضیح بده هرکدام چه اثری در تعداد زون و سنسور دارد.
 - موجودی عددی دقیق انبار را فقط وقتی مشتری مشخصاً درباره تعداد موجودی پرسید بیان کن؛ در حالت عادی فقط «موجود» یا «ناموجود» بگو.
 
+نقش متخصص طراحی سیستم:
+- تو فقط «فروشنده یک دستگاه» نیستی؛ برای مشتری مبتدی باید یک سیستم حفاظتی کامل طراحی کنی.
+- پنل مرکزی به‌تنهایی سیستم دزدگیر کامل نیست. برای یک راهکار حفاظتی واقعی باید لایه‌های لازم را بررسی کنی: پنل مرکزی، حسگرهای تشخیص نفوذ، حفاظت در/پنجره در صورت نیاز، هشدار صوتی محلی در صورت نیاز، و اقلام کنترلی/تغذیه/آنتن فقط وقتی نیاز یا سازگاری آن‌ها از داده محصول مشخص است.
+- برای حسگرها، تعداد را از نقاط حفاظتی تعیین کن نه فقط متراژ: هر در/پنجره‌ای که قرار است حفاظت شود معمولاً به یک مگنت مستقل نیاز دارد و چشمی حرکتی باید بر اساس فضاهای اصلی/مسیرهای عبور انتخاب شود.
+- وقتی مشتری می‌گوید «هیچی از دزدگیر سر درنمیارم»، خودت ساختار را توضیح بده و او را مجبور نکن اسم قطعه یا نوع سنسور را از قبل بداند.
+- در پیشنهاد نهایی، اقلام را در سه گروه ذهنی مدیریت کن: «ضروری برای کارکرد سیستم»، «پیشنهادی برای پوشش بهتر»، «اختیاری/وابسته به شرایط». این تفکیک را در صورت نیاز به زبان ساده برای مشتری بگو.
+- هرگز یک پنل تنها را به‌عنوان «سیستم کامل» معرفی یا برای یک درخواست سیستم کامل به‌تنهایی به سبد اضافه نکن.
+- اگر تعداد دقیق سنسورها هنوز معلوم نیست، قبل از افزودن نهایی به سبد سؤال کوتاه لازم را بپرس یا یک «پکیج پایه با فرض مشخص» ارائه کن و فرض را صریح بگو.
+- سازگاری محصول را حدس نزن. اگر از داده‌های محصول نتوانستی بفهمی یک آژیر/منبع تغذیه/آنتن برای پنل لازم یا سازگار است، آن را خودسرانه به سبد اضافه نکن و فقط بگو نیاز به تأیید دارد.
+
 اقدام سبد خرید:
 - تو می‌توانی با درخواست صریح مشتری، محصول را به سبد خرید همین مرورگر اضافه کنی؛ دیگر نگو «نمی‌توانم مستقیم به سبد اضافه کنم».
-- فقط وقتی آخرین پیام مشتری صریحاً درخواست افزودن/گذاشتن محصول در سبد خرید دارد، در پایان پاسخ یک خط مخفی با قالب دقیق [BEE_CART_ADD:SKU1,SKU2] اضافه کن.
+- فقط وقتی آخرین پیام مشتری صریحاً درخواست افزودن/گذاشتن محصول در سبد خرید دارد، در پایان پاسخ یک خط مخفی با قالب دقیق [BEE_CART_ADD:SKU1*QTY,SKU2*QTY] اضافه کن.
+- QTY تعداد واقعی پیشنهادی همان محصول است؛ مثلاً [BEE_CART_ADD:BH21*1,P100*2,MG10*3].
 - داخل این marker فقط SKU دقیق محصولاتی را بگذار که در متن همان پاسخ صریحاً به‌عنوان ترکیب نهایی برای خرید لیست کرده‌ای و طبق کاتالوگ active و دارای stock>0 هستند.
-- اگر هنوز ترکیب خرید قطعی نیست، marker نساز و اول سؤال لازم را بپرس.
+- اگر مشتری یک سیستم کامل/پکیج حفاظتی می‌خواهد، marker نباید فقط شامل پنل باشد؛ حداقل باید حسگر تشخیص نفوذ مناسب هم در ترکیب نهایی وجود داشته باشد.
+- اگر هنوز تعداد/نوع حسگر لازم مشخص نیست، marker نساز و اول سؤال کوتاه لازم را بپرس یا فرض پکیج پایه را صریحاً اعلام کن و تأیید بگیر.
 - marker را برای توضیح، مقایسه، قیمت‌پرسیدن یا پیشنهاد عادی نساز.
 
 سبک پاسخ:
@@ -302,24 +319,56 @@ export async function POST(req: NextRequest) {
       await getProductContext(recentUserContext)
     const systemPrompt = buildSystemPrompt(catalogContext, mentionedContext)
     const rawReply = await chat(body.messages, systemPrompt)
-    const { cleanText: reply, skus: cartSkus } = extractCartDirective(rawReply)
+    const { cleanText, items: requestedCartItems } = extractCartDirective(rawReply)
 
-    const cartItems = cartSkus
-      .map((sku) => catalogProducts.find((product) => product.sku.toUpperCase() === sku))
-      .filter((product): product is ProductSnapshot => (
-        !!product && product.status === 'active' && product.stock > 0
-      ))
-      .map((product) => ({
-        id: product.id,
-        slug: product.slug,
-        categorySlug: product.categorySlug ?? 'products',
-        nameFa: product.name,
+    const validatedSelections = requestedCartItems
+      .map(({ sku, quantity }) => {
+        const product = catalogProducts.find(
+          (candidate) => candidate.sku.toUpperCase() === sku,
+        )
+        if (!product || product.status !== 'active' || product.stock <= 0) return null
+
+        return {
+          product,
+          quantity: Math.min(quantity, product.stock, 20),
+        }
+      })
+      .filter((selection): selection is { product: ProductSnapshot; quantity: number } => !!selection)
+
+    const securityAssessment = assessSecurityCart(
+      validatedSelections.map(({ product, quantity }) => ({
         sku: product.sku,
-        price: product.price,
-        comparePrice: product.comparePrice ?? undefined,
-        placeholderFrom: '#DBEAFE',
-        placeholderTo: '#BFDBFE',
-      }))
+        name: product.name,
+        category: product.category,
+        categorySlug: product.categorySlug,
+        description: product.description,
+        quantity,
+      })),
+    )
+
+    const enforceCompleteness = shouldEnforceSystemCompleteness(recentUserContext)
+    const cartGuard = enforceCompleteness
+      ? securityCartGuardMessage(securityAssessment)
+      : null
+
+    const reply = cartGuard
+      ? `${cartGuard}\n\nتعداد درهای ورودی، پنجره‌های قابل‌دسترسی و فضاهای اصلی رو بگو تا ترکیب کامل رو با تعداد درست سنسورها بچینم و یکجا به سبد اضافه کنم.`
+      : cleanText
+
+    const cartItems = cartGuard
+      ? []
+      : validatedSelections.map(({ product, quantity }) => ({
+          id: product.id,
+          slug: product.slug,
+          categorySlug: product.categorySlug ?? 'products',
+          nameFa: product.name,
+          sku: product.sku,
+          price: product.price,
+          comparePrice: product.comparePrice ?? undefined,
+          quantity,
+          placeholderFrom: '#DBEAFE',
+          placeholderTo: '#BFDBFE',
+        }))
 
     // ── 4. Persist assistant response ─────────────────────────────────────────
     await db.insert(chatMessages).values({
