@@ -17,6 +17,7 @@ interface VoiceRuntimeConfig {
   provider: 'browser' | 'disabled'
   language?: string
   handsFree?: boolean
+  turnSilenceMs?: number
 }
 
 interface StartListeningOptions {
@@ -55,6 +56,8 @@ export function useVoiceAssistant() {
   const speakTokenRef = useRef(0)
   const messageTimerRef = useRef<number | null>(null)
   const restartTimerRef = useRef<number | null>(null)
+  const turnSilenceTimerRef = useRef<number | null>(null)
+  const turnSilenceMsRef = useRef(1200)
   const resumeSessionRef = useRef<() => void>(() => {})
 
   const clearMessageTimer = useCallback(() => {
@@ -68,6 +71,13 @@ export function useVoiceAssistant() {
     if (restartTimerRef.current !== null) {
       window.clearTimeout(restartTimerRef.current)
       restartTimerRef.current = null
+    }
+  }, [])
+
+  const clearTurnSilenceTimer = useCallback(() => {
+    if (turnSilenceTimerRef.current !== null) {
+      window.clearTimeout(turnSilenceTimerRef.current)
+      turnSilenceTimerRef.current = null
     }
   }, [])
 
@@ -131,6 +141,9 @@ export function useVoiceAssistant() {
         if (!isEnabled) return
 
         languageRef.current = config.language || LANGUAGE
+        if (typeof config.turnSilenceMs === 'number') {
+          turnSilenceMsRef.current = Math.min(3000, Math.max(600, config.turnSilenceMs))
+        }
         provider = new BrowserVoiceProvider()
         providerRef.current = provider
         setAvailable(provider.canListen())
@@ -149,11 +162,12 @@ export function useVoiceAssistant() {
       listenTokenRef.current += 1
       speakTokenRef.current += 1
       clearRestartTimer()
+      clearTurnSilenceTimer()
       provider?.destroy()
       if (providerRef.current === provider) providerRef.current = null
       clearMessageTimer()
     }
-  }, [clearMessageTimer, clearRestartTimer, setVoiceSessionActive])
+  }, [clearMessageTimer, clearRestartTimer, clearTurnSilenceTimer, setVoiceSessionActive])
 
   const beginListeningTurn = useCallback((
     callbacks: StartListeningOptions,
@@ -166,6 +180,7 @@ export function useVoiceAssistant() {
     }
 
     clearRestartTimer()
+    clearTurnSilenceTimer()
     const token = ++listenTokenRef.current
     let failed = false
     let latestTranscript = ''
@@ -188,6 +203,16 @@ export function useVoiceAssistant() {
           if (isFinal) finalChunks.push(text)
           const draft = [...finalChunks, ...(isFinal ? [] : [text])].join(' ').trim()
           if (draft) callbacks.onDraft(draft)
+
+          if (keepAlive && sessionActiveRef.current) {
+            clearTurnSilenceTimer()
+            turnSilenceTimerRef.current = window.setTimeout(() => {
+              turnSilenceTimerRef.current = null
+              // Browser SpeechRecognition does not expose raw VAD events.
+              // Treat a quiet window after the last transcript as the turn boundary.
+              providerRef.current?.stopListening()
+            }, turnSilenceMsRef.current)
+          }
         },
         onError: (error) => {
           if (token !== listenTokenRef.current) return
@@ -212,6 +237,7 @@ export function useVoiceAssistant() {
           failSession(error)
         },
         onEnd: () => {
+          clearTurnSilenceTimer()
           if (token !== listenTokenRef.current || failed) return
 
           const finalText = (finalChunks.join(' ') || latestTranscript).trim()
@@ -245,6 +271,7 @@ export function useVoiceAssistant() {
   }, [
     available,
     clearRestartTimer,
+    clearTurnSilenceTimer,
     enabled,
     failSession,
     setConversationPhase,
@@ -275,6 +302,7 @@ export function useVoiceAssistant() {
 
     clearMessageTimer()
     clearRestartTimer()
+    clearTurnSilenceTimer()
     speakTokenRef.current += 1
     provider.stopSpeaking()
     sessionOptionsRef.current = callbacks
@@ -302,6 +330,7 @@ export function useVoiceAssistant() {
     beginListeningTurn,
     clearMessageTimer,
     clearRestartTimer,
+    clearTurnSilenceTimer,
     enabled,
     failSession,
     handsFreeEnabled,
@@ -315,6 +344,7 @@ export function useVoiceAssistant() {
     setVoiceSessionActive(false)
     sessionOptionsRef.current = null
     clearRestartTimer()
+    clearTurnSilenceTimer()
     listenTokenRef.current += 1
     speakTokenRef.current += 1
     providerRef.current?.destroy()
@@ -324,6 +354,7 @@ export function useVoiceAssistant() {
     setConversationPhase('idle')
   }, [
     clearRestartTimer,
+    clearTurnSilenceTimer,
     setConversationPhase,
     setInteractionMode,
     setVoiceSessionActive,
@@ -397,6 +428,7 @@ export function useVoiceAssistant() {
 
     clearMessageTimer()
     clearRestartTimer()
+    clearTurnSilenceTimer()
     const token = ++speakTokenRef.current
 
     if (!provider.canSpeak()) {
@@ -446,6 +478,7 @@ export function useVoiceAssistant() {
   }, [
     clearMessageTimer,
     clearRestartTimer,
+    clearTurnSilenceTimer,
     enabled,
     failSession,
     scheduleStatusClear,
