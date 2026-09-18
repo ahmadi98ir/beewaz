@@ -11,6 +11,7 @@ export async function GET() {
   const enabled = envFlagEnabled(process.env.VOICE_ENABLED) && provider === 'browser'
   // New conversational mode is opt-in until mobile smoke tests are complete.
   const handsFree = enabled && envFlagEnabled(process.env.BEE_HANDSFREE_ENABLED, false)
+  const bargeIn = handsFree && envFlagEnabled(process.env.BEE_BARGE_IN_ENABLED, false)
   const parsedSilenceMs = Number.parseInt(process.env.BEE_TURN_SILENCE_MS ?? '1200', 10)
   const turnSilenceMs = Number.isFinite(parsedSilenceMs)
     ? Math.min(3000, Math.max(600, parsedSilenceMs))
@@ -22,6 +23,7 @@ export async function GET() {
       provider: enabled ? 'browser' : 'disabled',
       language: 'fa-IR',
       handsFree,
+      bargeIn,
       turnSilenceMs,
     },
     {
