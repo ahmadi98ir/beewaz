@@ -27,6 +27,18 @@ describe('security system builder', () => {
     })).toBe('opening_sensor')
   })
 
+  it('rejects a detector-only cart as incomplete because it has no panel', () => {
+    const assessment = assessSecurityCart([
+      { sku: 'MG10', name: 'مگنت سیمی بیواز MG10', category: 'حسگر ها', quantity: 8 },
+      { sku: 'P100', name: 'چشمی حرکتی بیواز P100', category: 'سنسورهای تشخیص حرکت', quantity: 3 },
+    ])
+
+    expect(assessment.hasPanel).toBe(false)
+    expect(assessment.hasDetection).toBe(true)
+    expect(assessment.missingRequired).toContain('central_panel')
+    expect(securityCartGuardMessage(assessment)).toContain('پنل مرکزی')
+  })
+
   it('rejects a panel-only cart as incomplete', () => {
     const assessment = assessSecurityCart([
       { sku: 'BH21', name: 'دستگاه دزدگیر BH21 بیواز', category: 'پنل های مرکزی هشدار', quantity: 1 },
