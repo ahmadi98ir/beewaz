@@ -28,7 +28,7 @@ export async function Footer() {
   const persianYear = currentYear - 621
 
   const phone    = settings.contact_phone   ?? '۰۲۱-۴۷۹۵۶'
-  const email    = settings.contact_email   ?? 'info@beewaz-co.com'
+  const email    = settings.contact_email   ?? 'info@beewaz.ir'
   const address  = settings.contact_address ?? 'تهران، ایران'
   const tagline  = settings.site_tagline    ?? 'طراح و سازنده سیستم‌های هوشمند و حفاظتی اماکن تجاری و مسکونی.'
   const siteName = settings.site_name      ?? 'بیواز'
