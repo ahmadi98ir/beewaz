@@ -103,7 +103,7 @@ export function CtaSection({ cms = {} }: CtaSectionProps) {
                 <div className="mt-12 flex flex-wrap items-center justify-center gap-x-10 gap-y-4 text-white/40 text-sm border-t border-white/10 pt-8">
                   <span className="flex items-center gap-2"><span className="text-white/70 font-bold text-base">+۱۵,۰۰۰</span> مشتری راضی</span>
                   <span className="w-px h-4 bg-white/20 hidden sm:block" />
-                  <span className="flex items-center gap-2"><span className="text-white/70 font-bold text-base">۱۸</span> ماه گارانتی</span>
+                  <span className="flex items-center gap-2"><span className="text-white/70 font-bold text-base">۲۴</span> ماه گارانتی</span>
                   <span className="w-px h-4 bg-white/20 hidden sm:block" />
                   <span className="flex items-center gap-2"><span className="text-white/70 font-bold text-base">۲۴/۷</span> پشتیبانی</span>
                   <span className="w-px h-4 bg-white/20 hidden sm:block" />
