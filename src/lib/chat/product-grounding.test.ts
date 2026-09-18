@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildStructuredSpecComparison,
   findMentionedProducts,
   normalizeProductReferenceText,
   productAvailabilityLabel,
@@ -24,6 +25,24 @@ describe('product grounding helpers', () => {
   it('recovers PH model codes produced by mobile STT', () => {
     const matches = findMentionedProducts('مدل BH۲۱ با PH۲۰ چه فرقی دارند؟', PRODUCTS)
     expect(matches.map((product) => product.sku)).toEqual(['BH20', 'BH21'])
+  })
+
+
+  it('builds only structured differences for product comparison', () => {
+    const products = [
+      { ...PRODUCTS[0]!, id: 'p20' },
+      { ...PRODUCTS[1]!, id: 'p21' },
+    ]
+    const lines = buildStructuredSpecComparison(products, [
+      { productId: 'p20', key: 'زون‌های سیمی', value: '5 عدد' },
+      { productId: 'p21', key: 'زون‌های سیمی', value: '9 عدد' },
+      { productId: 'p20', key: 'نمایشگر', value: 'LCD رنگی' },
+      { productId: 'p21', key: 'نمایشگر', value: 'LCD رنگی' },
+    ])
+
+    expect(lines).toEqual([
+      '- زون‌های سیمی: BH20 = 5 عدد | BH21 = 9 عدد',
+    ])
   })
 
   it('distinguishes visible zero-stock products from purchasable products', () => {

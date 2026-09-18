@@ -5,6 +5,7 @@ import { products, categories, productSpecs } from '@/lib/db/schema'
 import { chatSessions, chatMessages } from '@/lib/db/schema/chat'
 import { eq, and, desc, inArray, isNull } from 'drizzle-orm'
 import {
+  buildStructuredSpecComparison,
   findMentionedProducts,
   productAvailabilityLabel,
   type GroundedProduct,
@@ -135,6 +136,8 @@ async function getProductContext(lastUserText: string): Promise<{
         .orderBy(productSpecs.sortOrder)
     }
 
+    const structuredComparison = buildStructuredSpecComparison(mentioned, mentionedSpecs)
+
     return {
       catalogContext: [
         'کاتالوگ فعلی فروشگاه (دادهٔ مستقیم از دیتابیس همین سایت):',
@@ -142,9 +145,17 @@ async function getProductContext(lastUserText: string): Promise<{
       ].join('\n'),
       mentionedContext: mentioned.length > 0
         ? [
-            'محصول/مدل‌هایی که در آخرین پیام مشتری به‌طور مستقیم تشخیص داده شدند:',
+            'محصول/مدل‌هایی که در چند پیام اخیر مشتری تشخیص داده شدند:',
             ...mentioned.map((product) => productDetailBlock(product, mentionedSpecs)),
-            'برای مقایسهٔ فنی، فقط از مشخصات/توضیحات همین بخش استفاده کن؛ تفاوتی که اینجا ثبت نشده را نساز.',
+            ...(mentioned.length >= 2
+              ? [
+                  'تفاوت‌های ساختاریافته و قطعی بین مدل‌های اشاره‌شده:',
+                  ...(structuredComparison.length > 0
+                    ? structuredComparison
+                    : ['- در product_specs تفاوت ساختاریافته‌ای ثبت نشده است.']),
+                  'برای مقایسه بین مدل‌ها، این بخش مرجع اصلی است. توضیحات آزاد هر محصول را فقط برای همان محصول به‌کار ببر و رابطه بین دو مدل را وارونه یا استنباط نکن.',
+                ]
+              : []),
           ].join('\n\n')
         : '',
     }
@@ -175,7 +186,9 @@ function buildSystemPrompt(catalogContext: string, mentionedContext: string): st
 - محصول out_of_stock را «ناموجود» بدان.
 - برای پیشنهاد خرید، فقط محصول active با stock>0 را پیشنهاد بده؛ مگر اینکه مشتری مشخصاً درباره محصول ناموجود سؤال کرده باشد.
 - هرگز موجود یا ناموجود بودن، قیمت، مدل، قابلیت یا مشخصات فنی را از خودت حدس نزن.
-- اگر مشتری دو مدل را مقایسه کرد، فقط تفاوت‌هایی را بگو که در «مشخصات فنی ثبت‌شده» یا «توضیحات ثبت‌شده» همان مدل‌ها صریحاً وجود دارد.
+- اگر مشتری دو مدل را مقایسه کرد، «تفاوت‌های ساختاریافته و قطعی» مرجع اصلی پاسخ است و فقط همان تفاوت‌ها را با قیمت/موجودی قطعی ترکیب کن.
+- رابطه‌های نسلی را معکوس نکن: اگر توضیح محصول A می‌گوید «A نسخه‌ای از B است»، حق نداری نتیجه بگیری «B نسخه‌ای از A است».
+- توضیحات آزاد یک محصول را به محصول دیگر نسبت نده و از آن‌ها رابطه دوطرفه نساز.
 - جمله‌های مبهمی مثل «این مدل پیشرفته‌تر است»، «امکانات بیشتری دارد» یا «نسخه ضعیف‌تر است» بدون شاهد مشخص از دیتابیس ممنوع است.
 - اگر برای یک محور مقایسه داده کافی نداری، صریحاً بگو «برای این مورد اطلاعات کافی در دیتابیس ثبت نشده» و حدس نزن.
 - اگر مشتری گفت «روی سایت هست/موجوده»، نگو اطلاعاتی درباره سایت نداری؛ تو دستیار خود beewaz.ir هستی. وضعیت همان محصول را از دادهٔ زیر توضیح بده.
