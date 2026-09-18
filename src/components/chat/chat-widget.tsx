@@ -58,12 +58,15 @@ function makeVisitorToken() {
 export function ChatWidget() {
   const {
     state: beeState,
+    chatOpen,
     setState: setBeeState,
     setTransientState: setBeeTransientState,
+    openChat,
+    closeChat,
+    setInteractionMode,
   } = useBeeChatState()
   const [config, setConfig] = useState<ChatConfig>(CONFIG_DEFAULTS)
   const [configLoaded, setConfigLoaded] = useState(false)
-  const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [history, setHistory] = useState<GeminiMessage[]>([])
   const [inputValue, setInputValue] = useState('')
@@ -108,13 +111,50 @@ export function ChatWidget() {
   }, [messages, isTyping])
 
   useEffect(() => {
-    if (open) inputRef.current?.focus()
-  }, [open])
+    if (chatOpen) {
+      setHasNewMsg(false)
+      inputRef.current?.focus()
+    }
+  }, [chatOpen])
+
+  // First-entry orchestration: BEE greets visually, then opens the transcript.
+  // The browser cannot safely auto-grant microphone/audio permissions, so the
+  // actual voice session still starts from an explicit user gesture.
+  useEffect(() => {
+    if (!configLoaded || typeof window === 'undefined') return
+
+    const sessionKey = 'beewaz_auto_greeted'
+    try {
+      if (window.sessionStorage.getItem(sessionKey) === '1') return
+    } catch {
+      // Session storage can be unavailable in hardened/private browser modes.
+    }
+
+    const beeTimer = window.setTimeout(() => {
+      setBeeState('greeting')
+    }, 700)
+
+    const chatTimer = window.setTimeout(() => {
+      try {
+        window.sessionStorage.setItem(sessionKey, '1')
+      } catch {
+        // Best effort only; failure must not block the assistant.
+      }
+      openChat()
+      setHasNewMsg(false)
+      setBeeTransientState('greeting', 1600)
+    }, 1200)
+
+    return () => {
+      window.clearTimeout(beeTimer)
+      window.clearTimeout(chatTimer)
+    }
+  }, [configLoaded, openChat, setBeeState, setBeeTransientState])
 
   const pushBotMessage = useCallback((msg: ChatMessage) => {
     setMessages((prev) => [...prev, msg])
-    if (!open) setHasNewMsg(true)
-  }, [open])
+    if (!chatOpen) setHasNewMsg(true)
+  }, [chatOpen])
 
   const sendMessage = useCallback(async (text: string, options?: SendMessageOptions) => {
     if (!text.trim() || isTyping) return
@@ -132,6 +172,7 @@ export function ChatWidget() {
     setMessages((prev) => [...prev, userMsg])
     setInputValue('')
     setIsTyping(true)
+    setInteractionMode(options?.voiceReply ? 'voice' : 'text')
     setBeeState('thinking')
 
     const newHistory: GeminiMessage[] = [...history, { role: 'user', text: text.trim() }]
@@ -219,7 +260,7 @@ export function ChatWidget() {
         quickReplies: ['تلاش مجدد'],
       })
     }
-  }, [history, isTyping, leadSaved, pushBotMessage, setBeeState, setBeeTransientState])
+  }, [history, isTyping, leadSaved, pushBotMessage, setBeeState, setBeeTransientState, setInteractionMode])
 
   const voice = useVoiceAssistant()
 
@@ -261,18 +302,22 @@ export function ChatWidget() {
 
   const handleCloseChat = () => {
     voice.cancelAll()
-    setOpen(false)
+    closeChat()
+    setHasNewMsg(false)
   }
 
   const handleToggleChat = () => {
-    const nextOpen = !open
-    if (!nextOpen) {
+    if (chatOpen) {
       handleCloseChat()
-      setHasNewMsg(false)
       return
     }
 
-    setOpen(true)
+    try {
+      window.sessionStorage.setItem('beewaz_auto_greeted', '1')
+    } catch {
+      // Best effort only.
+    }
+    openChat()
     setHasNewMsg(false)
     if (!isTyping && beeState === 'idle') {
       setBeeTransientState('greeting')
@@ -298,7 +343,7 @@ export function ChatWidget() {
         className={[
           'fixed bottom-20 right-4 sm:right-6 z-50 w-80 sm:w-96 max-w-[calc(100vw-2rem)]',
           'transition-all duration-300 ease-out origin-bottom-right',
-          open
+          chatOpen
             ? 'opacity-100 scale-100 translate-y-0 pointer-events-auto'
             : 'opacity-0 scale-95 translate-y-4 pointer-events-none',
         ].join(' ')}
@@ -416,25 +461,25 @@ export function ChatWidget() {
         className={[
           'fixed bottom-4 right-4 sm:right-6 z-50 w-14 h-14 rounded-2xl shadow-xl',
           'flex items-center justify-center transition-all duration-300',
-          open ? 'bg-surface-700' : 'bg-brand-600 hover:bg-brand-700 hover:scale-105',
+          chatOpen ? 'bg-surface-700' : 'bg-brand-600 hover:bg-brand-700 hover:scale-105',
         ].join(' ')}
-        aria-label={open ? 'بستن چت' : 'باز کردن چت'}
-        aria-expanded={open}
+        aria-label={chatOpen ? 'بستن چت' : 'باز کردن چت'}
+        aria-expanded={chatOpen}
       >
-        {!open && (
+        {!chatOpen && (
           <>
             <span className="absolute inset-0 rounded-2xl bg-brand-600 animate-ping opacity-30" />
             <span className="absolute inset-0 rounded-2xl bg-brand-600 animate-ping opacity-20 animation-delay-500" />
           </>
         )}
-        {open ? (
+        {chatOpen ? (
           <XIcon size={22} className="text-white" />
         ) : (
           <svg viewBox="0 0 24 24" className="w-6 h-6 text-white" fill="currentColor" aria-hidden="true">
             <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z" />
           </svg>
         )}
-        {hasNewMsg && !open && (
+        {hasNewMsg && !chatOpen && (
           <span className="absolute -top-1 -start-1 w-4 h-4 rounded-full bg-green-400 border-2 border-white animate-bounce" />
         )}
       </button>
