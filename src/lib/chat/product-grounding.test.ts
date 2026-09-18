@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildStructuredSpecComparison,
+  extractCartDirective,
   findMentionedProducts,
   normalizeProductReferenceText,
   productAvailabilityLabel,
@@ -27,6 +28,11 @@ describe('product grounding helpers', () => {
     expect(matches.map((product) => product.sku)).toEqual(['BH20', 'BH21'])
   })
 
+  it('recovers BHP model codes produced by mobile STT', () => {
+    const matches = findMentionedProducts('پنل bh۲۱ و پنل bhp۲۰', PRODUCTS)
+    expect(matches.map((product) => product.sku)).toEqual(['BH20', 'BH21'])
+  })
+
 
   it('builds only structured differences for product comparison', () => {
     const products = [
@@ -43,6 +49,20 @@ describe('product grounding helpers', () => {
     expect(lines).toEqual([
       '- زون‌های سیمی: BH20 = 5 عدد | BH21 = 9 عدد',
     ])
+  })
+
+
+  it('extracts and strips a narrow cart directive', () => {
+    const parsed = extractCartDirective(
+      'این سه مورد رو برات انتخاب کردم. [BEE_CART_ADD:BH21,P100,MG10]',
+    )
+    expect(parsed.cleanText).toBe('این سه مورد رو برات انتخاب کردم.')
+    expect(parsed.skus).toEqual(['BH21', 'P100', 'MG10'])
+  })
+
+  it('ignores malformed cart directive SKUs', () => {
+    const parsed = extractCartDirective('[BEE_CART_ADD:BH21,../../bad,P100]')
+    expect(parsed.skus).toEqual(['BH21', 'P100'])
   })
 
   it('distinguishes visible zero-stock products from purchasable products', () => {
