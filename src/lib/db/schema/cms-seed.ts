@@ -21,7 +21,7 @@ export const DEFAULT_SITE_SETTINGS: NewSiteSetting[] = [
   // ── Contact ──
   { key: 'contact_phone',    value: '021-47956',                 type: 'text',    label: 'شماره تماس',           group: 'contact' },
   { key: 'contact_phone2',   value: '',                          type: 'text',    label: 'شماره موبایل',         group: 'contact' },
-  { key: 'contact_email',    value: 'info@beewaz-co.com',        type: 'text',    label: 'ایمیل',                group: 'contact', isRequired: true },
+  { key: 'contact_email',    value: 'info@beewaz.ir',        type: 'text',    label: 'ایمیل',                group: 'contact', isRequired: true },
   { key: 'contact_address',  value: 'تهران، ...',                type: 'text',    label: 'آدرس',                 group: 'contact' },
   { key: 'contact_hours',    value: 'شنبه تا چهارشنبه ۸ تا ۱۷ — پنجشنبه ۸ تا ۱۲', type: 'text', label: 'ساعت کاری', group: 'contact' },
   { key: 'whatsapp_number',  value: '',                          type: 'text',    label: 'شماره واتساپ',         group: 'contact', hint: 'مثال: 989121234567' },
@@ -35,7 +35,7 @@ export const DEFAULT_SITE_SETTINGS: NewSiteSetting[] = [
   // ── Commerce ──
   { key: 'free_shipping_threshold', value: '2000000',            type: 'number',  label: 'حد نصاب ارسال رایگان (ریال)', group: 'commerce' },
   { key: 'shipping_cost',           value: '150000',             type: 'number',  label: 'هزینه ارسال (ریال)',           group: 'commerce', hint: 'برای سفارش‌های زیر حد نصاب' },
-  { key: 'default_warranty_months', value: '18',                 type: 'number',  label: 'ماه‌های گارانتی پیش‌فرض', group: 'commerce' },
+  { key: 'default_warranty_months', value: '24',                 type: 'number',  label: 'ماه‌های گارانتی پیش‌فرض', group: 'commerce' },
   { key: 'shop_enabled',     value: 'true',                      type: 'boolean', label: 'فروشگاه فعال است',     group: 'commerce' },
   { key: 'checkout_notes',   value: '',                          type: 'text',    label: 'توضیح صفحه پرداخت',   group: 'commerce' },
   { key: 'bank_card_enabled', value: 'false',                    type: 'boolean', label: 'فعال‌سازی پرداخت کارت به کارت', group: 'commerce' },
