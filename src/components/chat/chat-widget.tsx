@@ -7,6 +7,7 @@ import type { ChatMessage } from '@/types/chat'
 import { MessageBubble } from './message-bubble'
 import { TypingIndicator } from './typing-indicator'
 import { useVoiceAssistant } from './use-voice-assistant'
+import { useCart } from '@/stores/cart'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -77,6 +78,8 @@ export function ChatWidget() {
   const [isTyping, setIsTyping] = useState(false)
   const [leadSaved, setLeadSaved] = useState(false)
   const [hasNewMsg, setHasNewMsg] = useState(false)
+  const addCartItem = useCart((state) => state.addItem)
+  const openCart = useCart((state) => state.openCart)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -200,6 +203,17 @@ export function ChatWidget() {
         leadCaptured?: boolean
         phone?: string
         error?: string
+        cartItems?: Array<{
+          id: string
+          slug: string
+          categorySlug: string
+          nameFa: string
+          sku: string
+          price: number
+          comparePrice?: number
+          placeholderFrom: string
+          placeholderTo: string
+        }>
       }
 
       try {
@@ -232,6 +246,11 @@ export function ChatWidget() {
 
       if (!responseIsError) {
         setHistory([...newHistory, { role: 'model', text: replyText }])
+
+        if (data.cartItems && data.cartItems.length > 0) {
+          data.cartItems.forEach((item) => addCartItem(item))
+          openCart()
+        }
       }
 
       if (responseIsError) {
@@ -276,7 +295,17 @@ export function ChatWidget() {
         retryText: text.trim(),
       })
     }
-  }, [history, isTyping, leadSaved, pushBotMessage, setBeeState, setBeeTransientState, setInteractionMode])
+  }, [
+    addCartItem,
+    history,
+    isTyping,
+    leadSaved,
+    openCart,
+    pushBotMessage,
+    setBeeState,
+    setBeeTransientState,
+    setInteractionMode,
+  ])
 
   const voice = useVoiceAssistant()
 

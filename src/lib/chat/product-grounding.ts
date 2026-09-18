@@ -23,11 +23,14 @@ export function normalizeProductReferenceText(text: string): string {
     .replace(/ي/g, 'ی')
     .replace(/ك/g, 'ک')
     .toLocaleLowerCase('fa-IR')
-    // Common Persian STT rendering of Latin model letters such as BH20/BH21.
+    // Common Persian STT renderings of Latin model letters such as BH20/BH21.
+    .replace(/بی\s*اچ\s*پی(?=\s*\d)/g, 'bh')
+    .replace(/بى\s*اچ\s*پى(?=\s*\d)/g, 'bh')
     .replace(/بی\s*اچ/g, 'bh')
     .replace(/بى\s*اچ/g, 'bh')
-    // Android/Persian STT occasionally renders spoken "بی اچ ۲۰" as "PH20".
-    // Only normalize PH when it directly prefixes a numeric model code.
+    // Android/Persian STT occasionally renders spoken "بی اچ ۲۰" as PH20/BHP20.
+    // Normalize only when the token directly prefixes a numeric model code.
+    .replace(/bhp(?=\d)/g, 'bh')
     .replace(/ph(?=\d)/g, 'bh')
     .replace(/[\u200c\u200f\u202a-\u202e]/g, '')
     .replace(/[^\p{L}\p{N}]+/gu, '')
@@ -102,4 +105,34 @@ export function buildStructuredSpecComparison<T extends ComparableProduct>(
   }
 
   return lines
+}
+
+
+export interface CartDirective {
+  cleanText: string
+  skus: string[]
+}
+
+/**
+ * Parses the hidden cart action marker emitted by BEE and strips it from the
+ * user-visible reply. The marker is intentionally narrow so arbitrary model
+ * text can never mutate the cart.
+ */
+export function extractCartDirective(text: string): CartDirective {
+  const matches = Array.from(text.matchAll(/\[BEE_CART_ADD:([^\]]+)\]/gi))
+  if (matches.length === 0) {
+    return { cleanText: text.trim(), skus: [] }
+  }
+
+  const skus = Array.from(new Set(
+    matches
+      .flatMap((match) => (match[1] ?? '').split(','))
+      .map((sku) => sku.trim().toUpperCase())
+      .filter((sku) => /^[A-Z0-9_-]{2,32}$/.test(sku)),
+  ))
+
+  return {
+    cleanText: text.replace(/\s*\[BEE_CART_ADD:[^\]]+\]\s*/gi, '\n').trim(),
+    skus,
+  }
 }
