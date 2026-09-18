@@ -57,12 +57,30 @@ describe('product grounding helpers', () => {
       'این سه مورد رو برات انتخاب کردم. [BEE_CART_ADD:BH21,P100,MG10]',
     )
     expect(parsed.cleanText).toBe('این سه مورد رو برات انتخاب کردم.')
-    expect(parsed.skus).toEqual(['BH21', 'P100', 'MG10'])
+    expect(parsed.items).toEqual([
+      { sku: 'BH21', quantity: 1 },
+      { sku: 'P100', quantity: 1 },
+      { sku: 'MG10', quantity: 1 },
+    ])
   })
 
   it('ignores malformed cart directive SKUs', () => {
     const parsed = extractCartDirective('[BEE_CART_ADD:BH21,../../bad,P100]')
-    expect(parsed.skus).toEqual(['BH21', 'P100'])
+    expect(parsed.items).toEqual([
+      { sku: 'BH21', quantity: 1 },
+      { sku: 'P100', quantity: 1 },
+    ])
+  })
+
+  it('parses quantities and merges duplicate SKUs', () => {
+    const parsed = extractCartDirective(
+      '[BEE_CART_ADD:BH21*1,P100*2,MG10*3,P100*1]',
+    )
+    expect(parsed.items).toEqual([
+      { sku: 'BH21', quantity: 1 },
+      { sku: 'P100', quantity: 3 },
+      { sku: 'MG10', quantity: 3 },
+    ])
   })
 
   it('distinguishes visible zero-stock products from purchasable products', () => {
