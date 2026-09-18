@@ -212,19 +212,13 @@ export function ChatWidget() {
       const replyText = data.error ?? data.message
       const responseIsError = !res.ok || !!data.error
 
-      // Extract quick replies from bot response if it contains numbered options
-      let quickReplies: string[] | undefined
-      const numbered = replyText.match(/[۱۲۳۴۵\d]\.\s*([^\n]+)/g)
-      if (numbered && numbered.length >= 2 && numbered.length <= 5) {
-        quickReplies = numbered.map((s) => s.replace(/^[۱۲۳۴۵\d]\.\s*/, '').trim()).slice(0, 4)
-      }
-
+      // Do not turn numbered product/comparison lines into quick-reply buttons.
+      // That duplicated the same recommendations underneath the assistant reply.
       pushBotMessage({
         id: makeId(),
         role: 'bot',
         content: replyText,
         timestamp: Date.now(),
-        quickReplies,
       })
 
       setHistory((prev) => [...prev, { role: 'model', text: replyText }])
