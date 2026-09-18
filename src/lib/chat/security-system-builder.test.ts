@@ -3,6 +3,7 @@ import {
   assessSecurityCart,
   classifySecurityProduct,
   securityCartGuardMessage,
+  shouldEnforceSystemCompleteness,
 } from './security-system-builder'
 
 describe('security system builder', () => {
@@ -46,5 +47,17 @@ describe('security system builder', () => {
 
     expect(assessment.missingRequired).toEqual([])
     expect(securityCartGuardMessage(assessment)).toBeNull()
+  })
+
+  it('enforces completeness for novice home-system conversations', () => {
+    expect(shouldEnforceSystemCompleteness(
+      'من برای خونه ۱۲۰ متری هیچی از دزدگیر سر درنمیارم، سیستم کامل می‌خوام',
+    )).toBe(true)
+  })
+
+  it('allows an explicit panel-only purchase', () => {
+    expect(shouldEnforceSystemCompleteness(
+      'فقط پنل BH21 رو به سبد اضافه کن',
+    )).toBe(false)
   })
 })
