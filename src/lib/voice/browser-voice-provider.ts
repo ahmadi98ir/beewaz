@@ -143,7 +143,10 @@ export class BrowserVoiceProvider implements VoiceProvider {
 
     const recognition = new Recognition()
     recognition.lang = options.language
-    recognition.continuous = false
+    // Keep recognition alive across natural pauses when the browser supports it.
+    // Mobile Chrome may still terminate a recognition session on its own; the
+    // conversation hook treats that as a recoverable boundary and restarts it.
+    recognition.continuous = true
     recognition.interimResults = true
     recognition.maxAlternatives = 1
 

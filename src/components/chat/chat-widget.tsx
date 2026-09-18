@@ -59,11 +59,15 @@ export function ChatWidget() {
   const {
     state: beeState,
     chatOpen,
+    voiceConsent,
     setState: setBeeState,
+    setPhase: setConversationPhase,
     setTransientState: setBeeTransientState,
+    setTransientPhase: setBeeTransientPhase,
     openChat,
     closeChat,
     setInteractionMode,
+    setVoiceConsent,
   } = useBeeChatState()
   const [config, setConfig] = useState<ChatConfig>(CONFIG_DEFAULTS)
   const [configLoaded, setConfigLoaded] = useState(false)
@@ -80,6 +84,7 @@ export function ChatWidget() {
   const sessionId = useRef<string | undefined>(undefined)
   const voiceSpeakRef = useRef<(text: string) => void>(() => {})
   const voiceCancelRef = useRef<() => void>(() => {})
+  const voiceResumeRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     visitorToken.current = makeVisitorToken()
@@ -142,14 +147,14 @@ export function ChatWidget() {
       }
       openChat()
       setHasNewMsg(false)
-      setBeeTransientState('greeting', 1600)
+      setBeeTransientPhase('greeting', 1600, 'idle')
     }, 1200)
 
     return () => {
       window.clearTimeout(beeTimer)
       window.clearTimeout(chatTimer)
     }
-  }, [configLoaded, openChat, setBeeState, setBeeTransientState])
+  }, [configLoaded, openChat, setBeeState, setBeeTransientPhase])
 
   const pushBotMessage = useCallback((msg: ChatMessage) => {
     setMessages((prev) => [...prev, msg])
@@ -159,9 +164,9 @@ export function ChatWidget() {
   const sendMessage = useCallback(async (text: string, options?: SendMessageOptions) => {
     if (!text.trim() || isTyping) return
 
-    // A new turn always owns the interaction. Cancel any leftover listening or
-    // speech first so voice callbacks cannot overwrite the upcoming thinking state.
-    voiceCancelRef.current()
+    // Typed turns leave voice mode; microphone-originated turns keep the
+    // hands-free session alive so BEE can resume listening after speaking.
+    if (!options?.voiceReply) voiceCancelRef.current()
 
     const userMsg: ChatMessage = {
       id: makeId(),
@@ -226,6 +231,9 @@ export function ChatWidget() {
 
       if (responseIsError) {
         setBeeTransientState('error')
+        if (options?.voiceReply) {
+          window.setTimeout(() => voiceResumeRef.current(), 700)
+        }
       } else if (options?.voiceReply) {
         // No autoplay for ordinary text chat. Audio is produced only for a turn
         // the user explicitly started from the microphone button.
@@ -252,6 +260,9 @@ export function ChatWidget() {
     } catch {
       setIsTyping(false)
       setBeeTransientState('error')
+      if (options?.voiceReply) {
+        window.setTimeout(() => voiceResumeRef.current(), 700)
+      }
       pushBotMessage({
         id: makeId(),
         role: 'bot',
@@ -267,28 +278,49 @@ export function ChatWidget() {
   useEffect(() => {
     voiceSpeakRef.current = voice.speak
     voiceCancelRef.current = voice.cancelAll
+    voiceResumeRef.current = voice.resumeSession
     return () => {
       voiceSpeakRef.current = () => {}
       voiceCancelRef.current = () => {}
+      voiceResumeRef.current = () => {}
     }
-  }, [voice.cancelAll, voice.speak])
+  }, [voice.cancelAll, voice.resumeSession, voice.speak])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (inputValue.trim()) void sendMessage(inputValue)
   }
 
+  const startBeeVoiceSession = () => {
+    void voice.startSession({
+      onDraft: setInputValue,
+      onFinal: (text) => {
+        void sendMessage(text, { voiceReply: true })
+      },
+    })
+  }
+
   const handleVoiceControl = () => {
-    if (voice.phase === 'speaking') {
+    if (voice.phase === 'speaking' && voice.sessionActive) {
+      // Explicit interruption: stop BEE speaking and immediately resume listening.
       voice.stopSpeaking()
       return
     }
-    if (voice.phase === 'listening') {
+    if (voice.phase === 'listening' && voice.sessionActive) {
+      // Optional manual turn boundary; normal hands-free use does not require this.
       voice.finishListening()
       return
     }
     if (voice.phase === 'requesting-permission') {
       voice.cancelAll()
+      return
+    }
+    if (voice.sessionActive) {
+      voice.stopSession()
+      return
+    }
+    if (voice.handsFreeEnabled) {
+      startBeeVoiceSession()
       return
     }
 
@@ -298,6 +330,14 @@ export function ChatWidget() {
         void sendMessage(text, { voiceReply: true })
       },
     })
+  }
+
+  const handleTextMode = () => {
+    voice.stopSession()
+    setVoiceConsent('denied')
+    setInteractionMode('text')
+    setConversationPhase('idle')
+    inputRef.current?.focus()
   }
 
   const handleCloseChat = () => {
@@ -327,7 +367,7 @@ export function ChatWidget() {
   if (!configLoaded) return null
 
   const voiceInputLocked = voice.phase === 'requesting-permission' || voice.phase === 'listening'
-  const voiceActive = voiceInputLocked || voice.phase === 'speaking'
+  const voiceActive = voiceInputLocked || voice.phase === 'speaking' || voice.sessionActive
   const voiceButtonLabel = voice.phase === 'speaking'
     ? 'توقف پاسخ صوتی'
     : voice.phase === 'listening'
@@ -385,6 +425,48 @@ export function ChatWidget() {
 
           {/* Input */}
           <div className="flex-shrink-0 border-t border-surface-100 p-3 bg-surface-50/50">
+            {voice.available && voice.handsFreeEnabled && voiceConsent === 'unknown' && !voice.sessionActive && (
+              <div className="mb-3 rounded-2xl border border-brand-100 bg-brand-50/60 p-3 text-center">
+                <p className="text-sm font-semibold text-surface-800">
+                  می‌خوای مستقیم با BEE صحبت کنی؟
+                </p>
+                <p className="mt-1 text-xs leading-5 text-surface-500">
+                  یک‌بار اجازهٔ میکروفون را بده؛ بعد مکالمه به‌صورت رفت‌وبرگشتی ادامه پیدا می‌کند.
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={startBeeVoiceSession}
+                    className="flex-1 rounded-xl bg-brand-600 px-3 py-2 text-xs font-bold text-white hover:bg-brand-700"
+                  >
+                    🎙 شروع گفت‌وگو با BEE
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleTextMode}
+                    className="rounded-xl border border-surface-200 bg-white px-3 py-2 text-xs font-semibold text-surface-600"
+                  >
+                    تایپ می‌کنم
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {voice.sessionActive && (
+              <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-orange-100 bg-orange-50/70 px-3 py-2">
+                <span className="text-xs font-semibold text-orange-800">
+                  ● گفت‌وگوی صوتی با BEE فعال است
+                </span>
+                <button
+                  type="button"
+                  onClick={voice.stopSession}
+                  className="text-xs font-bold text-orange-800 underline underline-offset-2"
+                >
+                  پایان
+                </button>
+              </div>
+            )}
+
             <form onSubmit={handleSubmit} className="flex gap-2">
               <input
                 ref={inputRef}
