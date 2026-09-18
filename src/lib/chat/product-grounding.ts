@@ -26,6 +26,9 @@ export function normalizeProductReferenceText(text: string): string {
     // Common Persian STT rendering of Latin model letters such as BH20/BH21.
     .replace(/بی\s*اچ/g, 'bh')
     .replace(/بى\s*اچ/g, 'bh')
+    // Android/Persian STT occasionally renders spoken "بی اچ ۲۰" as "PH20".
+    // Only normalize PH when it directly prefixes a numeric model code.
+    .replace(/ph(?=\d)/g, 'bh')
     .replace(/[\u200c\u200f\u202a-\u202e]/g, '')
     .replace(/[^\p{L}\p{N}]+/gu, '')
 }

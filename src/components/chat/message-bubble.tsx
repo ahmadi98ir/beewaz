@@ -8,26 +8,64 @@ type Props = {
   onQuickReply: (text: string) => void
 }
 
-// پارسر ساده markdown برای **bold** و \n
+// پارسر امن markdown محدود برای **bold**، لینک و خط جدید
+function parseInlineContent(text: string, lineIndex: number): React.ReactNode[] {
+  const tokenRegex = /(\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g
+  const nodes: React.ReactNode[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = tokenRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index))
+    }
+
+    const token = match[0]
+    const key = `${lineIndex}-${match.index}`
+
+    if (token.startsWith('**') && token.endsWith('**')) {
+      nodes.push(
+        <strong key={key} className="font-bold">
+          {token.slice(2, -2)}
+        </strong>,
+      )
+    } else {
+      const linkMatch = token.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/)
+      if (linkMatch) {
+        nodes.push(
+          <a
+            key={key}
+            href={linkMatch[2]}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-semibold text-brand-700 underline underline-offset-2 hover:text-brand-800"
+          >
+            {linkMatch[1]}
+          </a>,
+        )
+      } else {
+        nodes.push(token)
+      }
+    }
+
+    lastIndex = match.index + token.length
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex))
+  }
+
+  return nodes
+}
+
 function parseContent(text: string): React.ReactNode[] {
   const lines = text.split('\n')
-  return lines.map((line, i) => {
-    const parts = line.split(/\*\*(.+?)\*\*/g)
-    return (
-      <span key={i}>
-        {parts.map((part, j) =>
-          j % 2 === 1 ? (
-            <strong key={j} className="font-bold">
-              {part}
-            </strong>
-          ) : (
-            part
-          ),
-        )}
-        {i < lines.length - 1 && <br />}
-      </span>
-    )
-  })
+  return lines.map((line, i) => (
+    <span key={i}>
+      {parseInlineContent(line, i)}
+      {i < lines.length - 1 && <br />}
+    </span>
+  ))
 }
 
 export function MessageBubble({ message, onQuickReply }: Props) {

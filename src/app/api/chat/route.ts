@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { chat } from '@/lib/gemini'
 import { db } from '@/lib/db'
-import { products, categories } from '@/lib/db/schema'
+import { products, categories, productSpecs } from '@/lib/db/schema'
 import { chatSessions, chatMessages } from '@/lib/db/schema/chat'
 import { eq, and, desc, inArray, isNull } from 'drizzle-orm'
 import {
@@ -13,11 +13,19 @@ import {
 // ── Product context for system prompt ─────────────────────────────────────────
 
 interface ProductSnapshot extends GroundedProduct {
+  id: string
   slug: string
+  description: string | null
   price: number
   category: string | null
   categorySlug: string | null
   warrantyDays: number
+}
+
+interface ProductSpecSnapshot {
+  productId: string
+  key: string
+  value: string
 }
 
 function productUrl(product: ProductSnapshot): string {
@@ -42,6 +50,27 @@ function productFactLine(product: ProductSnapshot): string {
   ].join(' | ')
 }
 
+function productDetailBlock(
+  product: ProductSnapshot,
+  specs: readonly ProductSpecSnapshot[],
+): string {
+  const productSpecsForItem = specs.filter((spec) => spec.productId === product.id)
+  const technicalFacts = productSpecsForItem.length > 0
+    ? productSpecsForItem.map((spec) => `  • ${spec.key}: ${spec.value}`)
+    : ['  • مشخصات فنی ساختاریافته‌ای برای این محصول در دیتابیس ثبت نشده است.']
+
+  const description = product.description?.trim()
+    ? product.description.trim().slice(0, 1200)
+    : 'توضیحات تکمیلی ثبت نشده است.'
+
+  return [
+    productFactLine(product),
+    `توضیحات ثبت‌شده: ${description}`,
+    'مشخصات فنی ثبت‌شده:',
+    ...technicalFacts,
+  ].join('\n')
+}
+
 async function getProductContext(lastUserText: string): Promise<{
   catalogContext: string
   mentionedContext: string
@@ -49,9 +78,11 @@ async function getProductContext(lastUserText: string): Promise<{
   try {
     const rows = await db
       .select({
+        id: products.id,
         name: products.nameFa,
         sku: products.sku,
         slug: products.slug,
+        description: products.descriptionFa,
         price: products.price,
         stock: products.stock,
         status: products.status,
@@ -69,9 +100,11 @@ async function getProductContext(lastUserText: string): Promise<{
       .limit(120)
 
     const snapshots: ProductSnapshot[] = rows.map((row) => ({
+      id: row.id,
       name: row.name,
       sku: row.sku,
       slug: row.slug,
+      description: row.description,
       price: row.price,
       stock: row.stock,
       status: row.status === 'out_of_stock' ? 'out_of_stock' : 'active',
@@ -88,6 +121,20 @@ async function getProductContext(lastUserText: string): Promise<{
     }
 
     const mentioned = findMentionedProducts(lastUserText, snapshots)
+
+    let mentionedSpecs: ProductSpecSnapshot[] = []
+    if (mentioned.length > 0) {
+      mentionedSpecs = await db
+        .select({
+          productId: productSpecs.productId,
+          key: productSpecs.keyFa,
+          value: productSpecs.valueFa,
+        })
+        .from(productSpecs)
+        .where(inArray(productSpecs.productId, mentioned.map((product) => product.id)))
+        .orderBy(productSpecs.sortOrder)
+    }
+
     return {
       catalogContext: [
         'کاتالوگ فعلی فروشگاه (دادهٔ مستقیم از دیتابیس همین سایت):',
@@ -96,9 +143,9 @@ async function getProductContext(lastUserText: string): Promise<{
       mentionedContext: mentioned.length > 0
         ? [
             'محصول/مدل‌هایی که در آخرین پیام مشتری به‌طور مستقیم تشخیص داده شدند:',
-            ...mentioned.map(productFactLine),
-            'این بخش برای پاسخ درباره همان مدل‌ها اولویت بالاتری از برداشت آزاد مدل دارد.',
-          ].join('\n')
+            ...mentioned.map((product) => productDetailBlock(product, mentionedSpecs)),
+            'برای مقایسهٔ فنی، فقط از مشخصات/توضیحات همین بخش استفاده کن؛ تفاوتی که اینجا ثبت نشده را نساز.',
+          ].join('\n\n')
         : '',
     }
   } catch (error) {
@@ -128,6 +175,9 @@ function buildSystemPrompt(catalogContext: string, mentionedContext: string): st
 - محصول out_of_stock را «ناموجود» بدان.
 - برای پیشنهاد خرید، فقط محصول active با stock>0 را پیشنهاد بده؛ مگر اینکه مشتری مشخصاً درباره محصول ناموجود سؤال کرده باشد.
 - هرگز موجود یا ناموجود بودن، قیمت، مدل، قابلیت یا مشخصات فنی را از خودت حدس نزن.
+- اگر مشتری دو مدل را مقایسه کرد، فقط تفاوت‌هایی را بگو که در «مشخصات فنی ثبت‌شده» یا «توضیحات ثبت‌شده» همان مدل‌ها صریحاً وجود دارد.
+- جمله‌های مبهمی مثل «این مدل پیشرفته‌تر است»، «امکانات بیشتری دارد» یا «نسخه ضعیف‌تر است» بدون شاهد مشخص از دیتابیس ممنوع است.
+- اگر برای یک محور مقایسه داده کافی نداری، صریحاً بگو «برای این مورد اطلاعات کافی در دیتابیس ثبت نشده» و حدس نزن.
 - اگر مشتری گفت «روی سایت هست/موجوده»، نگو اطلاعاتی درباره سایت نداری؛ تو دستیار خود beewaz.ir هستی. وضعیت همان محصول را از دادهٔ زیر توضیح بده.
 - اگر دادهٔ محصول در دسترس نبود، صریح بگو امکان تأیید موجودی لحظه‌ای نداری و حدس نزن.
 - اگر بخش «محصول‌های تشخیص‌داده‌شده» وجود دارد، حقایق آن بخش بر هر برداشت قبلی یا حدس اولویت دارند.
