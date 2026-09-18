@@ -117,6 +117,16 @@ export function MessageBubble({ message, onQuickReply }: Props) {
         </div>
       )}
 
+      {isBot && message.retryText && (
+        <button
+          type="button"
+          onClick={() => onQuickReply(message.retryText!)}
+          className="text-xs font-bold px-3 py-1.5 rounded-full border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 transition-colors"
+        >
+          تلاش مجدد
+        </button>
+      )}
+
       {/* زمان */}
       <span className="text-[10px] text-surface-400 px-1">
         {new Intl.DateTimeFormat('fa-IR', { hour: '2-digit', minute: '2-digit' }).format(
