@@ -78,6 +78,10 @@ export function ChatWidget() {
   const [isTyping, setIsTyping] = useState(false)
   const [leadSaved, setLeadSaved] = useState(false)
   const [hasNewMsg, setHasNewMsg] = useState(false)
+  const [pendingCartPlan, setPendingCartPlan] = useState<Array<{
+    sku: string
+    quantity: number
+  }>>([])
   const addCartItem = useCart((state) => state.addItem)
   const openCart = useCart((state) => state.openCart)
   const currentCartItems = useCart((state) => state.items)
@@ -199,6 +203,7 @@ export function ChatWidget() {
             nameFa: item.nameFa,
             quantity: item.quantity,
           })),
+          cartPlan: pendingCartPlan,
         }),
       })
 
@@ -209,6 +214,10 @@ export function ChatWidget() {
         leadCaptured?: boolean
         phone?: string
         error?: string
+        cartPlan?: Array<{
+          sku: string
+          quantity: number
+        }>
         cartItems?: Array<{
           id: string
           slug: string
@@ -253,6 +262,10 @@ export function ChatWidget() {
 
       if (!responseIsError) {
         setHistory([...newHistory, { role: 'model', text: replyText }])
+
+        if (data.cartPlan) {
+          setPendingCartPlan(data.cartPlan)
+        }
 
         if (data.cartItems && data.cartItems.length > 0) {
           data.cartItems.forEach((item) => {
@@ -315,6 +328,7 @@ export function ChatWidget() {
     isTyping,
     leadSaved,
     openCart,
+    pendingCartPlan,
     pushBotMessage,
     setBeeState,
     setBeeTransientState,
