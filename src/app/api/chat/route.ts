@@ -1051,17 +1051,24 @@ export async function POST(req: NextRequest) {
         && !assumedMotionCoverage
         && !approvalAgainstStalePlan
       )
-      const cartActionId = wantsImmediatePurchase
+      const plannedCartDelta = packageCartDelta(deterministicSelections)
+      const purchaseBlocked = (
+        !!plannedCartDelta.conflictingPanelSku
+        || !!plannedCartDelta.overTargetSku
+      )
+      const shouldPurchase = wantsImmediatePurchase && !purchaseBlocked
+      const alreadySatisfied = shouldPurchase && plannedCartDelta.delta.length === 0
+      const cartActionId = shouldPurchase && !alreadySatisfied
         ? requestId ?? `cart-${sessionId}-${Date.now()}`
         : undefined
-      const cartActionItems = wantsImmediatePurchase
-        ? deterministicSelections.map(({ product, quantity }) => ({
+      const cartActionItems = shouldPurchase && !alreadySatisfied
+        ? plannedCartDelta.delta.map(({ product, quantity }) => ({
             sku: product.sku,
             quantity,
           }))
         : undefined
-      const cartItems = wantsImmediatePurchase
-        ? deterministicSelections.map(({ product, quantity }) => ({
+      const cartItems = shouldPurchase && !alreadySatisfied
+        ? plannedCartDelta.delta.map(({ product, quantity }) => ({
             id: product.id,
             slug: product.slug,
             categorySlug: product.categorySlug ?? 'products',
@@ -1075,10 +1082,17 @@ export async function POST(req: NextRequest) {
           }))
         : []
 
-      const message = wantsImmediatePurchase
-        ? 'حتماً 👌 همین پکیج تأییدشده رو با تعدادهای دقیق به سبد خرید اضافه کردم.'
-        : recommendation
-      const persistedPlan = wantsImmediatePurchase
+      const message = plannedCartDelta.conflictingPanelSku && wantsImmediatePurchase
+        ? `توی سبدت پنل ${plannedCartDelta.conflictingPanelSku} هست و این پکیج پنل متفاوتی داره. چیزی اضافه نکردم؛ اول پنل قبلی رو حذف کن تا ترکیب دو پنله نشه.`
+        : plannedCartDelta.overTargetSku && wantsImmediatePurchase
+          ? `توی سبدت از ${plannedCartDelta.overTargetSku} بیشتر از تعداد این پکیج هست. چیزی اضافه نکردم تا تعدادها ناخواسته بیشتر نشه.`
+          : alreadySatisfied
+            ? 'همین پکیج با تعدادهای لازم از قبل توی سبدت هست 👌 چیزی دوباره اضافه نکردم.'
+            : shouldPurchase
+              ? 'حتماً 👌 اقلامِ باقی‌موندهٔ همین پکیج رو با تعداد دقیق به سبد خرید اضافه کردم.'
+              : recommendation
+
+      const persistedPlan = shouldPurchase
         ? []
         : deterministicSelections.map(({ product, quantity }) => ({
             sku: product.sku,
