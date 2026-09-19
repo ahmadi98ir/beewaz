@@ -529,7 +529,7 @@ export async function POST(req: NextRequest) {
           || seen.has(sku)
           || !Number.isInteger(quantity)
           || quantity < 1
-          || quantity > 20
+          || quantity > 999
         ) {
           return []
         }
