@@ -3,6 +3,9 @@ import {
   buildStructuredSpecComparison,
   canonicalizeSku,
   extractCartDirective,
+  extractCartSignals,
+  hasCartPlanModificationIntent,
+  isCartCommitIntent,
   findMentionedProducts,
   findLatestSingleMentionedProduct,
   normalizeProductReferenceText,
@@ -127,6 +130,34 @@ describe('product grounding helpers', () => {
       { sku: 'MG10', quantity: 8 },
       { sku: 'P100', quantity: 1 },
     ])
+  })
+
+
+  it('keeps a proposed package separate from cart execution', () => {
+    const parsed = extractCartSignals(
+      'این ترکیب پیشنهادی منه. [BEE_CART_PLAN:BH21*1,MG10*8,P100*2]',
+    )
+
+    expect(parsed.cleanText).toBe('این ترکیب پیشنهادی منه.')
+    expect(parsed.addItems).toEqual([])
+    expect(parsed.planItems).toEqual([
+      { sku: 'BH21', quantity: 1 },
+      { sku: 'MG10', quantity: 8 },
+      { sku: 'P100', quantity: 2 },
+    ])
+  })
+
+  it('recognizes terse approvals only as commit intent when a plan exists upstream', () => {
+    expect(isCartCommitIntent('خوب اوکیه اگر خودت میگی خوبه برام')).toBe(true)
+    expect(isCartCommitIntent('آره موافقم می‌خوام بخرمش')).toBe(true)
+    expect(isCartCommitIntent('اوکی سبد نهایی کن')).toBe(true)
+    expect(isCartCommitIntent('پنلم همون چیزی که فکر می‌کنی خوبه رو بذار')).toBe(true)
+    expect(isCartCommitIntent('قیمت این پکیج چنده؟')).toBe(false)
+  })
+
+  it('detects plan modifications separately from plain approval', () => {
+    expect(hasCartPlanModificationIntent('اوکی فقط یه چشمی دیگه اضافه کن')).toBe(true)
+    expect(hasCartPlanModificationIntent('باشه همین خوبه')).toBe(false)
   })
 
   it('strips bracketed Persian internal cart-action explanations', () => {
