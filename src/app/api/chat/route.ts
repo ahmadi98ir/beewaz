@@ -16,6 +16,7 @@ import {
   classifySecurityProduct,
   securityCartGuardMessage,
   shouldEnforceSystemCompleteness,
+  wiredZoneCapacityGuardMessage,
 } from '@/lib/chat/security-system-builder'
 
 // ── Product context for system prompt ─────────────────────────────────────────
@@ -134,19 +135,40 @@ async function getProductContext(lastUserText: string): Promise<{
     }
 
     const mentioned = findMentionedProducts(lastUserText, snapshots)
+    const panelProducts = snapshots.filter((product) => (
+      classifySecurityProduct({
+        sku: product.sku,
+        name: product.name,
+        category: product.category,
+        categorySlug: product.categorySlug,
+        description: product.description,
+      }) === 'panel'
+    ))
 
-    let mentionedSpecs: ProductSpecSnapshot[] = []
-    if (mentioned.length > 0) {
-      mentionedSpecs = await db
+    const detailProductIds = Array.from(new Set([
+      ...mentioned.map((product) => product.id),
+      ...panelProducts.map((product) => product.id),
+    ]))
+
+    let detailSpecs: ProductSpecSnapshot[] = []
+    if (detailProductIds.length > 0) {
+      detailSpecs = await db
         .select({
           productId: productSpecs.productId,
           key: productSpecs.keyFa,
           value: productSpecs.valueFa,
         })
         .from(productSpecs)
-        .where(inArray(productSpecs.productId, mentioned.map((product) => product.id)))
+        .where(inArray(productSpecs.productId, detailProductIds))
         .orderBy(productSpecs.sortOrder)
     }
+
+    const mentionedSpecs = detailSpecs.filter((spec) => (
+      mentioned.some((product) => product.id === spec.productId)
+    ))
+    const panelSpecs = detailSpecs.filter((spec) => (
+      panelProducts.some((product) => product.id === spec.productId)
+    ))
 
     const structuredComparison = buildStructuredSpecComparison(mentioned, mentionedSpecs)
 
@@ -154,6 +176,11 @@ async function getProductContext(lastUserText: string): Promise<{
       catalogContext: [
         'کاتالوگ فعلی فروشگاه (دادهٔ مستقیم از دیتابیس همین سایت):',
         ...snapshots.map(productFactLine),
+        '',
+        'مشخصات فنی پنل‌های مرکزی قابل پیشنهاد:',
+        ...(panelProducts.length > 0
+          ? panelProducts.map((product) => productDetailBlock(product, panelSpecs))
+          : ['پنل مرکزی فعالی برای مقایسه پیدا نشد.']),
       ].join('\n'),
       mentionedContext: mentioned.length > 0
         ? [
@@ -238,6 +265,7 @@ function buildSystemPrompt(
 - اگر مشتری یک سیستم کامل/پکیج حفاظتی می‌خواهد، marker نباید فقط شامل پنل باشد؛ حداقل باید حسگر تشخیص نفوذ مناسب هم در ترکیب نهایی وجود داشته باشد.
 - اگر هنوز تعداد/نوع حسگر لازم مشخص نیست، marker نساز و اول سؤال کوتاه لازم را بپرس یا فرض پکیج پایه را صریحاً اعلام کن و تأیید بگیر.
 - marker را برای توضیح، مقایسه، قیمت‌پرسیدن یا پیشنهاد عادی نساز.
+- marker یا توضیح داخلی آن را هرگز به‌صورت متن قابل مشاهده مثل «[ربط به سبد خرید: ...]» ننویس؛ فقط همان marker دقیق ماشینی را در انتهای پاسخ قرار بده.
 - اگر یک «ترکیب نهایی خرید» را در متن می‌نویسی و cart action می‌سازی، marker باید همهٔ اقلام همان ترکیب نهایی را با همان تعداد شامل شود. حذف پنل یا یکی از اجزای اصلی از marker ممنوع است.
 
 وضعیت فعلی سبد خرید مشتری:
@@ -403,23 +431,49 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const securityAssessment = assessSecurityCart(
-      validatedSelections.map(({ product, quantity }) => ({
-        sku: product.sku,
-        name: product.name,
-        category: product.category,
-        categorySlug: product.categorySlug,
-        description: product.description,
-        quantity,
-      })),
-    )
+    let selectedSpecs: ProductSpecSnapshot[] = []
+    if (validatedSelections.length > 0) {
+      selectedSpecs = await db
+        .select({
+          productId: productSpecs.productId,
+          key: productSpecs.keyFa,
+          value: productSpecs.valueFa,
+        })
+        .from(productSpecs)
+        .where(inArray(
+          productSpecs.productId,
+          validatedSelections.map(({ product }) => product.id),
+        ))
+        .orderBy(productSpecs.sortOrder)
+    }
 
-    const cartGuard = enforceCompleteness
+    const assessedSelections = validatedSelections.map(({ product, quantity }) => ({
+      sku: product.sku,
+      name: product.name,
+      category: product.category,
+      categorySlug: product.categorySlug,
+      description: product.description,
+      specs: selectedSpecs
+        .filter((spec) => spec.productId === product.id)
+        .map((spec) => ({ key: spec.key, value: spec.value })),
+      quantity,
+    }))
+
+    const securityAssessment = assessSecurityCart(assessedSelections)
+    const cartActionAttempted = requestedCartItems.length > 0
+
+    const completenessGuard = enforceCompleteness && cartActionAttempted
       ? securityCartGuardMessage(securityAssessment)
       : null
+    const capacityGuard = enforceCompleteness && cartActionAttempted && !completenessGuard
+      ? wiredZoneCapacityGuardMessage(assessedSelections)
+      : null
+    const cartGuard = completenessGuard ?? capacityGuard
 
     const reply = cartGuard
-      ? `${cartGuard}\n\nتعداد درهای ورودی، پنجره‌های قابل‌دسترسی و فضاهای اصلی رو بگو تا ترکیب کامل رو با تعداد درست سنسورها بچینم و یکجا به سبد اضافه کنم.`
+      ? capacityGuard
+        ? `${cartGuard}\n\nاگر بخوای، می‌تونم ترکیب رو با پنل/حسگرهای مناسب‌تر اصلاح کنم و بعد یکجا به سبد اضافه کنم.`
+        : `${cartGuard}\n\nتعداد درهای ورودی، پنجره‌های قابل‌دسترسی و فضاهای اصلی رو بگو تا ترکیب کامل رو با تعداد درست سنسورها بچینم و یکجا به سبد اضافه کنم.`
       : cleanText
 
     const cartItems = cartGuard
