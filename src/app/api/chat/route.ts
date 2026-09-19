@@ -972,104 +972,64 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    const systemPrompt = buildSystemPrompt(
-      catalogContext,
-      mentionedContext,
-      cartContext,
-      cartPlanContext,
-    )
-    const rawReply = await chat(body.messages, systemPrompt)
-    const signals = extractCartSignals(rawReply)
-    const cleanText = signals.cleanText
-
+    // ── Deterministic direct-product purchase ───────────────────────────────
+    // Outside the whole-system package flow, a product can enter the cart only
+    // when the customer's latest message resolves to explicit catalog items.
     const directCommitIntent = isExplicitCartPurchaseIntent(latestUserText)
-    const inferredReplyItems = inferCartPlanFromAssistantText(cleanText, catalogProducts)
-    const requestedCartItems = directCommitIntent
-      ? mergeCartSelectionItems(
-          signals.addItems,
-          signals.planItems,
-          inferredReplyItems,
-        )
-      : []
-
-    let validatedSelections = validateCartSelectionItems(requestedCartItems)
-
-    // Backwards-compatible recovery for direct buy requests where the model
-    // mentions a single panel in the reply but accidentally omits it from ADD.
-    if (enforceCompleteness && directCommitIntent && validatedSelections.length > 0) {
-      const selectedHasPanel = validatedSelections.some(
-        ({ product }) => classifySecurityProduct({
-          sku: product.sku,
-          name: product.name,
-          category: product.category,
-          categorySlug: product.categorySlug,
-          description: product.description,
-        }) === 'panel',
+    if (directCommitIntent) {
+      const explicitlyMentioned = findMentionedProducts(
+        latestUserText,
+        catalogProducts,
       )
 
-      if (!selectedHasPanel) {
-        const purchasablePanels = catalogProducts.filter((product) => (
-          product.status === 'active'
-          && product.stock > 0
-          && classifySecurityProduct({
-            sku: product.sku,
-            name: product.name,
-            category: product.category,
-            categorySlug: product.categorySlug,
-            description: product.description,
-          }) === 'panel'
-        ))
-        const recoveredPanel = findLatestSingleMentionedProduct(
-          [
-            cleanText,
-            ...body.messages.slice(-10).reverse().map((message) => message.text),
-          ],
-          purchasablePanels,
+      const referentialPurchase = /(همین|همون|همان|این\s*(?:رو|را)?)/i.test(latestUserText)
+      const latestAssistantBeforeUser = [...persistedMessages]
+        .reverse()
+        .find((message) => message.role === 'assistant')
+
+      const referencedProducts = (
+        explicitlyMentioned.length === 0
+        && referentialPurchase
+        && latestAssistantBeforeUser
+      )
+        ? findMentionedProducts(latestAssistantBeforeUser.content, catalogProducts)
+        : []
+
+      const requestedProducts = explicitlyMentioned.length > 0
+        ? explicitlyMentioned
+        : referencedProducts.length === 1
+          ? referencedProducts
+          : []
+
+      if (requestedProducts.length > 0) {
+        const unavailable = requestedProducts.filter(
+          (product) => product.status !== 'active' || product.stock < 1,
         )
-        if (recoveredPanel) {
-          validatedSelections = [
-            { product: recoveredPanel, quantity: 1 },
-            ...validatedSelections,
-          ]
+
+        if (unavailable.length > 0) {
+          const message = `الان ${unavailable.map((product) => product.sku).join('، ')} موجودی قابل خرید نداره؛ چیزی به سبد اضافه نکردم.`
+          await db.insert(chatMessages).values({
+            sessionId,
+            role: 'assistant',
+            content: message,
+            metadata: { requestId },
+          })
+
+          return NextResponse.json({
+            message,
+            session_id: sessionId,
+            cartItems: [],
+            cartPlan: [],
+            leadCaptured: false,
+          })
         }
-      }
-    }
 
-    const cartActionAttempted = directCommitIntent && validatedSelections.length > 0
-    const actionAssessment = cartActionAttempted
-      ? await assessValidatedSelections(validatedSelections)
-      : { guard: null as string | null, capacityGuard: null as string | null }
-    const cartGuard = actionAssessment.guard
-
-    // Capture a structured proposal for the next turn. A rogue ADD marker on a
-    // non-purchase turn is demoted to PLAN instead of mutating the browser cart.
-    const proposedItems = !directCommitIntent
-      ? mergeCartSelectionItems(
-          signals.planItems,
-          signals.addItems,
-          inferredReplyItems,
-        )
-      : []
-    const proposedSelections = validateCartSelectionItems(proposedItems)
-    const proposalAssessment = proposedSelections.length > 0
-      ? await assessValidatedSelections(proposedSelections)
-      : { guard: null as string | null, capacityGuard: null as string | null }
-    const proposalGuard = proposalAssessment.guard
-
-    // Guards may block a real cart mutation, but they must never hijack an
-    // ordinary recommendation turn. An invalid proposed plan is simply not
-    // persisted; the customer still sees BEE's actual recommendation.
-    const reply = cartGuard
-      ? actionAssessment.capacityGuard
-        ? `${cartGuard}\n\nاگر بخوای، ترکیب رو اصلاح می‌کنم تا با ظرفیت واقعی پنل و نوع حسگرها جور دربیاد و بعد یکجا وارد سبدش کنیم.`
-        : `${cartGuard}\n\nفقط همون یک موردی که واقعاً برای خرید کمه رو مشخص می‌کنیم و بعد یکجا جمعش می‌کنم.`
-      : cartActionAttempted
-        ? `${cleanText}\n\n✅ موارد تأییدشده به سبد خرید اضافه شدند.`
-        : cleanText
-
-    const cartItems = !cartActionAttempted || cartGuard
-      ? []
-      : validatedSelections.map(({ product, quantity }) => ({
+        const cartActionId = requestId ?? `cart-${sessionId}-${Date.now()}`
+        const cartActionItems = requestedProducts.map((product) => ({
+          sku: product.sku,
+          quantity: 1,
+        }))
+        const cartItems = requestedProducts.map((product) => ({
           id: product.id,
           slug: product.slug,
           categorySlug: product.categorySlug ?? 'products',
@@ -1077,38 +1037,88 @@ export async function POST(req: NextRequest) {
           sku: product.sku,
           price: product.price,
           comparePrice: product.comparePrice ?? undefined,
-          quantity,
+          quantity: 1,
           placeholderFrom: '#DBEAFE',
           placeholderTo: '#BFDBFE',
         }))
+        const message = requestedProducts.length === 1
+          ? `حتماً 👌 ${requestedProducts[0]!.sku} رو به سبد خرید اضافه کردم.`
+          : `حتماً 👌 ${requestedProducts.map((product) => product.sku).join('، ')} رو به سبد خرید اضافه کردم.`
 
-    const cartPlan = cartActionAttempted
-      ? []
-      : proposalGuard
-        ? []
-        : proposedSelections.map(({ product, quantity }) => ({
-            sku: product.sku,
-            quantity,
-          }))
+        await db.insert(chatMessages).values({
+          sessionId,
+          role: 'assistant',
+          content: message,
+          metadata: {
+            requestId,
+            cartActionId,
+            cartActionItems,
+          },
+        })
 
-    // ── 4. Persist assistant response ─────────────────────────────────────────
+        return NextResponse.json({
+          message,
+          session_id: sessionId,
+          cartItems,
+          cartActionId,
+          cartPlan: [],
+          leadCaptured: false,
+        })
+      }
+
+      if (referentialPurchase && referencedProducts.length > 1) {
+        const message = `برای اینکه محصول اشتباه وارد سبد نشه، اسم مدل رو بگو؛ اینجا چند مدل مطرح شده: ${referencedProducts.map((product) => product.sku).join('، ')}.`
+        await db.insert(chatMessages).values({
+          sessionId,
+          role: 'assistant',
+          content: message,
+          metadata: { requestId },
+        })
+
+        return NextResponse.json({
+          message,
+          session_id: sessionId,
+          cartItems: [],
+          cartPlan: [],
+          leadCaptured: false,
+        })
+      }
+    }
+
+    // ── LLM text-only conversation ──────────────────────────────────────────
+    // The model can explain and advise, but it cannot mutate cart state.
+    const systemPrompt = buildSystemPrompt(
+      catalogContext,
+      mentionedContext,
+      cartContext,
+      cartPlanContext,
+    )
+    const rawReply = await chat(canonicalMessages.slice(-24), systemPrompt)
+    const sanitized = extractCartSignals(rawReply).cleanText
+    const phone = extractIranMobile(latestUserText)
+    let reply = sanitized || 'برای این مورد پاسخ قابل‌اعتماد آماده نشد؛ لطفاً سؤال رو یک‌بار کوتاه‌تر بفرست.'
+
+    if (phone && !reply.startsWith('✅ شماره')) {
+      reply = `✅ شماره ${phone} ثبت شد.\n\n${reply}`
+    }
+
     await db.insert(chatMessages).values({
       sessionId,
       role: 'assistant',
       content: reply,
+      metadata: {
+        requestId,
+        extractedPhone: phone ?? undefined,
+      },
     })
-
-    // ── 5. Detect lead (phone number) ─────────────────────────────────────────
-    const phoneMatch = latestUserText.match(/(\+98|0)?9\d{9}/)
-    const leadCaptured = !!phoneMatch && reply.includes('✅')
 
     return NextResponse.json({
       message: reply,
       session_id: sessionId,
-      cartItems,
-      cartPlan,
-      leadCaptured,
-      phone: leadCaptured ? phoneMatch![0] : undefined,
+      cartItems: [],
+      cartPlan: [],
+      leadCaptured: !!phone,
+      phone: phone ?? undefined,
     })
   } catch (err) {
     console.error('[chat]', err)
