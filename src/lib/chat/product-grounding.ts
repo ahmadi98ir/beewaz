@@ -130,9 +130,16 @@ export interface CartDirective {
  * prevents arbitrary model text from becoming cart mutations.
  */
 export function extractCartDirective(text: string): CartDirective {
+  const stripInternalCartAnnotations = (value: string) => value
+    .replace(/\s*\[BEE_CART_ADD:[^\]]+\]\s*/gi, '\n')
+    // Occasionally the model explains the hidden action in Persian. Strip only
+    // bracketed internal-action looking blocks; ordinary cart prose stays visible.
+    .replace(/\s*\[\s*(?:ربط\s+به|افزودن\s+به|اضافه\s+به)\s+سبد\s*خرید\s*:[\s\S]*?\]\s*/gi, '\n')
+    .trim()
+
   const matches = Array.from(text.matchAll(/\[BEE_CART_ADD:([^\]]+)\]/gi))
   if (matches.length === 0) {
-    return { cleanText: text.trim(), items: [] }
+    return { cleanText: stripInternalCartAnnotations(text), items: [] }
   }
 
   const quantities = new Map<string, number>()
@@ -148,15 +155,8 @@ export function extractCartDirective(text: string): CartDirective {
     quantities.set(sku, Math.min(20, (quantities.get(sku) ?? 0) + quantity))
   }
 
-  const cleanText = text
-    .replace(/\s*\[BEE_CART_ADD:[^\]]+\]\s*/gi, '\n')
-    // Occasionally the model explains the hidden action in Persian. Strip only
-    // bracketed internal-action looking blocks; ordinary cart prose stays visible.
-    .replace(/\s*\[\s*(?:ربط\s+به|افزودن\s+به|اضافه\s+به)\s+سبد\s*خرید\s*:[\s\S]*?\]\s*/gi, '\n')
-    .trim()
-
   return {
-    cleanText,
+    cleanText: stripInternalCartAnnotations(text),
     items: Array.from(quantities, ([sku, quantity]) => ({ sku, quantity })),
   }
 }
