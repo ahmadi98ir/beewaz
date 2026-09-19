@@ -481,16 +481,18 @@ export async function POST(req: NextRequest) {
     const recentUserContext = userTexts.slice(-4).join('\n')
     const systemIntentContext = userTexts.slice(-12).join('\n')
 
-    const latestSalesMessage = [...persistedMessages]
+    const latestAssistantMessage = [...persistedMessages]
       .reverse()
-      .find((message) => (
-        message.role === 'assistant'
-        && (
-          message.metadata?.packageMode === 'security_system'
-          || (message.metadata?.cartPlan?.length ?? 0) > 0
-        )
-      ))
-    const latestSalesState = latestSalesMessage?.metadata ?? null
+      .find((message) => message.role === 'assistant')
+    const latestSalesState = (
+      latestAssistantMessage
+      && (
+        latestAssistantMessage.metadata?.packageMode === 'security_system'
+        || (latestAssistantMessage.metadata?.cartPlan?.length ?? 0) > 0
+      )
+    )
+      ? latestAssistantMessage.metadata ?? null
+      : null
 
     // ── 3. Load authoritative catalog context ───────────────────────────────
     const { catalogContext, mentionedContext, products: catalogProducts } =
@@ -846,7 +848,8 @@ export async function POST(req: NextRequest) {
     }
 
     const packageFlowActive = (
-      (
+      !isExplicitPanelOnlyRequest(latestUserText)
+      && (
         latestSalesState?.packageMode === 'security_system'
         || isSecurityPackageConversation(userTexts)
       )
