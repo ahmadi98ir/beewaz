@@ -151,6 +151,7 @@ describe('product grounding helpers', () => {
     expect(isCartCommitIntent('خوب اوکیه اگر خودت میگی خوبه برام')).toBe(true)
     expect(isCartCommitIntent('آره موافقم می‌خوام بخرمش')).toBe(true)
     expect(isCartCommitIntent('اوکی سبد نهایی کن')).toBe(true)
+    expect(isCartCommitIntent('پنلم همون چیزی که فکر می‌کنی خوبه رو بذار')).toBe(true)
     expect(isCartCommitIntent('قیمت این پکیج چنده؟')).toBe(false)
   })
 
