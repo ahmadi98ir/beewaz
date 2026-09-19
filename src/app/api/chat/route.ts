@@ -30,6 +30,7 @@ import {
   buildDeterministicSecurityPackage,
   extractSecurityNeeds,
   isPackageRecommendationIntent,
+  isPackageRequirementsUpdate,
   isSecurityPackageConversation,
   type DeterministicPackageProduct,
 } from '@/lib/chat/security-package-planner'
@@ -605,7 +606,12 @@ export async function POST(req: NextRequest) {
     // a package is built from live catalog/stock/spec data.
     const packageFlowActive = (
       isSecurityPackageConversation(userTexts)
-      && userTexts.slice(-6).some(isPackageRecommendationIntent)
+      && (
+        isPackageRecommendationIntent(latestUserText)
+        || isPackageRequirementsUpdate(latestUserText)
+        || isExplicitCartPurchaseIntent(latestUserText)
+        || currentPlanReady
+      )
     )
 
     if (packageFlowActive) {
