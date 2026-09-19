@@ -71,6 +71,26 @@ export const chatMessages = pgTable('chat_messages', {
     confidence?: number
     extractedPhone?: string
     extractedName?: string
+    requestId?: string
+    cartActionId?: string
+    cartActionItems?: Array<{
+      sku: string
+      quantity: number
+    }>
+    cartPlan?: Array<{
+      sku: string
+      quantity: number
+    }>
+    packageMode?: 'security_system'
+    packageQuestionKey?: 'openings' | 'doors' | 'windows' | 'motion_areas'
+    packageNeeds?: {
+      areaM2: number | null
+      doors: number | null
+      windows: number | null
+      motionAreas: number | null
+      wiringPreference: 'wired' | 'wireless' | 'hybrid' | 'unknown'
+      novice: boolean
+    }
   }>(),
 
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

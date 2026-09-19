@@ -8,9 +8,7 @@ import {
   buildStructuredSpecComparison,
   canonicalizeSku,
   extractCartSignals,
-  findLatestSingleMentionedProduct,
   hasCartPlanModificationIntent,
-  inferCartPlanFromAssistantText,
   isCartCommitIntent,
   isExplicitCartPurchaseIntent,
   findMentionedProducts,
@@ -27,10 +25,14 @@ import {
   wiredZoneCapacityGuardMessage,
 } from '@/lib/chat/security-system-builder'
 import {
+  applyPackageQuestionAnswer,
+  applyPackageRequirementAdjustment,
   buildDeterministicSecurityPackage,
   extractSecurityNeeds,
   isPackageRecommendationIntent,
+  isPackageRequirementsUpdate,
   isSecurityPackageConversation,
+  isUnknownPackageAnswer,
   type DeterministicPackageProduct,
 } from '@/lib/chat/security-package-planner'
 
@@ -298,20 +300,12 @@ function buildSystemPrompt(
 - اگر تعداد دقیق سنسورها هنوز معلوم نیست، قبل از افزودن نهایی به سبد سؤال کوتاه لازم را بپرس یا یک «پکیج پایه با فرض مشخص» ارائه کن و فرض را صریح بگو.
 - سازگاری محصول را حدس نزن. اگر از داده‌های محصول نتوانستی بفهمی یک آژیر/منبع تغذیه/آنتن برای پنل لازم یا سازگار است، آن را خودسرانه به سبد اضافه نکن و فقط بگو نیاز به تأیید دارد.
 
-برنامه خرید و اقدام سبد:
-- وقتی یک ترکیب مشخص با SKU و تعداد دقیق پیشنهاد می‌دهی اما مشتری هنوز نگفته آن را بخرد، در انتهای پاسخ فقط یک marker مخفی با قالب دقیق [BEE_CART_PLAN:SKU1*QTY,SKU2*QTY] بساز. این marker فقط «پیشنهاد فعلی» است و نباید چیزی را به سبد اضافه کند.
-- وقتی مشتری صریحاً خرید/افزودن/تأیید همان ترکیب را می‌خواهد، به‌جای PLAN از marker دقیق [BEE_CART_ADD:SKU1*QTY,SKU2*QTY] استفاده کن.
-- هیچ‌وقت marker فارسی مثل «[به سبد اضافه می‌شود: ...]» نساز. فقط دو قالب BEE_CART_PLAN و BEE_CART_ADD مجازند.
-- تو می‌توانی با درخواست صریح مشتری، محصول را به سبد خرید همین مرورگر اضافه کنی؛ دیگر نگو «نمی‌توانم مستقیم به سبد اضافه کنم».
-- فقط وقتی آخرین پیام مشتری صریحاً درخواست افزودن/گذاشتن/خرید یا تأیید پیشنهاد فعلی را دارد، BEE_CART_ADD بساز.
-- QTY تعداد واقعی پیشنهادی همان محصول است؛ مثلاً [BEE_CART_ADD:BH21*1,P100*2,MG10*3].
-- داخل این marker فقط SKU دقیق محصولاتی را بگذار که در متن همان پاسخ صریحاً به‌عنوان ترکیب نهایی برای خرید لیست کرده‌ای و طبق کاتالوگ active و دارای stock>0 هستند.
-- اگر مشتری یک سیستم کامل/پکیج حفاظتی می‌خواهد، marker نباید فقط شامل پنل باشد؛ حداقل باید حسگر تشخیص نفوذ مناسب هم در ترکیب نهایی وجود داشته باشد.
-- اگر هنوز تعداد/نوع حسگر لازم مشخص نیست، marker نساز و اول سؤال کوتاه لازم را بپرس یا فرض پکیج پایه را صریحاً اعلام کن و تأیید بگیر.
-- وقتی مشتری بعد از مشخص‌شدن ترکیب می‌گوید «اضافه کن»، «همینو اضافه کن»، «اوکی اضافه کن»، «تأیید می‌کنم» یا عبارت روشن مشابه، تأیید دوباره نگیر؛ همان نوبت cart action را اجرا کن.
-- برای توضیح، مقایسه یا قیمت‌پرسیدن بدون ترکیب نهایی هیچ marker نساز. برای «پیشنهاد عادیِ دقیق با اقلام و تعداد مشخص» فقط PLAN بساز، نه ADD.
-- marker یا توضیح داخلی آن را هرگز به‌صورت متن قابل مشاهده ننویس؛ فقط marker ماشینی را در انتهای پاسخ قرار بده.
-- اگر یک «ترکیب نهایی خرید» را در متن می‌نویسی و cart action می‌سازی، marker باید همهٔ اقلام همان ترکیب نهایی را با همان تعداد شامل شود. حذف پنل یا یکی از اجزای اصلی از marker ممنوع است.
+اقدام خرید و سبد:
+- تصمیم واقعی افزودن به سبد توسط backend قطعی سایت انجام می‌شود، نه با متن آزاد تو.
+- هیچ marker، فرمان داخلی، JSON، BEE_CART_PLAN یا BEE_CART_ADD در پاسخ تولید نکن.
+- اگر مشتری گفت محصول/پکیج را بخرد، طبیعی و کوتاه جواب بده؛ backend خودش اقدام معتبر را انجام می‌دهد.
+- هیچ‌وقت ادعای «به سبد اضافه شد» نکن مگر اینکه context ساختاریافتهٔ همین درخواست صراحتاً بگوید اقدام خرید انجام شده است.
+- برای پیشنهاد عادی فقط محصول و دلیل را واضح بگو؛ هیچ متن ماشینی یا دستور داخلی ننویس.
 
 وضعیت فعلی سبد خرید مشتری:
 ${cartContext}
@@ -359,11 +353,19 @@ async function getOrCreateSession(
   sessionId: string | undefined,
   visitorToken: string | undefined,
 ): Promise<string> {
-  if (sessionId) {
+  const safeVisitorToken = visitorToken?.trim().slice(0, 100)
+
+  // Never accept a browser-supplied session UUID by itself. Once we use the
+  // persisted transcript as canonical context, ownership must be tied to the
+  // same anonymous visitor token that created the session.
+  if (sessionId && safeVisitorToken) {
     const [existing] = await db
       .select({ id: chatSessions.id })
       .from(chatSessions)
-      .where(eq(chatSessions.id, sessionId))
+      .where(and(
+        eq(chatSessions.id, sessionId),
+        eq(chatSessions.visitorToken, safeVisitorToken),
+      ))
       .limit(1)
     if (existing) return existing.id
   }
@@ -371,12 +373,36 @@ async function getOrCreateSession(
   const [created] = await db
     .insert(chatSessions)
     .values({
-      visitorToken: visitorToken ?? null,
+      visitorToken: safeVisitorToken ?? null,
       status: 'active',
     })
     .returning({ id: chatSessions.id })
 
   return created!.id
+}
+
+function normalizeDecimalDigits(text: string): string {
+  const persian = '۰۱۲۳۴۵۶۷۸۹'
+  const arabic = '٠١٢٣٤٥٦٧٨٩'
+  return Array.from(text).map((char) => {
+    const p = persian.indexOf(char)
+    if (p >= 0) return String(p)
+    const a = arabic.indexOf(char)
+    if (a >= 0) return String(a)
+    return char
+  }).join('')
+}
+
+function extractIranMobile(text: string): string | null {
+  const normalized = normalizeDecimalDigits(text).replace(/[\s()-]/g, '')
+  const match = normalized.match(/(?:\+98|0098|0)?9\d{9}/)
+  if (!match) return null
+
+  const raw = match[0]
+  if (raw.startsWith('+98')) return '0' + raw.slice(3)
+  if (raw.startsWith('0098')) return '0' + raw.slice(4)
+  if (raw.startsWith('9')) return '0' + raw
+  return raw
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -385,11 +411,14 @@ interface ChatRequest {
   messages: { role: 'user' | 'model'; text: string }[]
   session_id?: string
   visitorToken?: string
+  request_id?: string
   cart?: Array<{
     sku: string
     nameFa: string
     quantity: number
   }>
+  // Legacy clients may still send this during a rolling deployment. The server
+  // treats persisted assistant metadata as the primary source of plan state.
   cartPlan?: Array<{
     sku: string
     quantity: number
@@ -404,46 +433,78 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'پیامی ارسال نشده' }, { status: 400 })
     }
 
-    // ── 1. Session management ─────────────────────────────────────────────────
-    const sessionId = await getOrCreateSession(body.session_id, body.visitorToken)
-
-    // ── 2. Persist user message ───────────────────────────────────────────────
-    const lastUserMsg = body.messages.findLast((m) => m.role === 'user')
-    if (lastUserMsg) {
-      await db.insert(chatMessages).values({
-        sessionId,
-        role: 'user',
-        content: lastUserMsg.text,
-      })
+    const lastUserMsg = body.messages.findLast((message) => message.role === 'user')
+    if (!lastUserMsg?.text?.trim()) {
+      return NextResponse.json({ error: 'پیامی ارسال نشده' }, { status: 400 })
     }
 
-    // ── 3. Build context and call AI ─────────────────────────────────────────
-    // Keep product/spec grounding alive across short follow-up turns such as
-    // «خودت کدومو پیشنهاد میدی؟» where the model names are omitted.
-    const recentUserContext = body.messages
+    const requestId = body.request_id?.trim().slice(0, 100) || undefined
+
+    // ── 1. Session management ───────────────────────────────────────────────
+    const sessionId = await getOrCreateSession(body.session_id, body.visitorToken)
+
+    // ── 2. Persist current user turn ────────────────────────────────────────
+    await db.insert(chatMessages).values({
+      sessionId,
+      role: 'user',
+      content: lastUserMsg.text.trim(),
+      metadata: requestId ? { requestId } : undefined,
+    })
+
+    // The database transcript is canonical. This survives refreshes and avoids
+    // trusting a client-provided copy of previous assistant messages.
+    const persistedDesc = await db
+      .select({
+        role: chatMessages.role,
+        content: chatMessages.content,
+        metadata: chatMessages.metadata,
+        createdAt: chatMessages.createdAt,
+      })
+      .from(chatMessages)
+      .where(eq(chatMessages.sessionId, sessionId))
+      .orderBy(desc(chatMessages.createdAt))
+      .limit(40)
+
+    const persistedMessages = persistedDesc.reverse()
+    const canonicalMessages = persistedMessages
+      .filter((message) => message.role === 'user' || message.role === 'assistant')
+      .map((message) => ({
+        role: message.role === 'user' ? 'user' as const : 'model' as const,
+        text: message.content,
+      }))
+
+    const userTexts = canonicalMessages
       .filter((message) => message.role === 'user')
-      .slice(-4)
       .map((message) => message.text)
-      .join('\n')
-    const systemIntentContext = body.messages
-      .filter((message) => message.role === 'user')
-      .slice(-12)
-      .map((message) => message.text)
-      .join('\n')
+
+    const recentUserContext = userTexts.slice(-4).join('\n')
+    const systemIntentContext = userTexts.slice(-12).join('\n')
+
+    const latestAssistantMessage = [...persistedMessages]
+      .reverse()
+      .find((message) => message.role === 'assistant')
+    const latestSalesState = (
+      latestAssistantMessage
+      && (
+        latestAssistantMessage.metadata?.packageMode === 'security_system'
+        || (latestAssistantMessage.metadata?.cartPlan?.length ?? 0) > 0
+      )
+    )
+      ? latestAssistantMessage.metadata ?? null
+      : null
+
+    // ── 3. Load authoritative catalog context ───────────────────────────────
     const { catalogContext, mentionedContext, products: catalogProducts } =
       await getProductContext(recentUserContext)
 
     const currentCart = Array.isArray(body.cart) ? body.cart.slice(0, 50) : []
-    const userTexts = body.messages
-      .filter((message) => message.role === 'user')
-      .map((message) => message.text)
     const cartContext = currentCart.length > 0
       ? currentCart
           .map((item) => `- ${item.sku} | ${item.nameFa} | تعداد: ${Math.max(1, item.quantity || 1)}`)
           .join('\n')
       : '- سبد خرید فعلاً خالی است.'
 
-    const latestUserText = lastUserMsg?.text ?? ''
+    const latestUserText = lastUserMsg.text.trim()
     const enforceCompleteness = (
       !isExplicitPanelOnlyRequest(latestUserText)
       && shouldEnforceSystemCompleteness(systemIntentContext)
@@ -453,36 +514,44 @@ export async function POST(req: NextRequest) {
 
     const validateCartSelectionItems = (
       items: readonly { sku: string; quantity: number }[],
-    ): ValidatedSelection[] => items
-      .map(({ sku, quantity }) => {
+    ): ValidatedSelection[] => {
+      if (items.length === 0) return []
+
+      const selections: ValidatedSelection[] = []
+      const seen = new Set<string>()
+
+      for (const item of items) {
+        const sku = canonicalizeSku(item.sku)
+        const quantity = Number(item.quantity)
+
+        // Never silently clamp a proposed quantity. A package is either still
+        // exactly purchasable or it must be rebuilt against current stock.
+        if (
+          !sku
+          || seen.has(sku)
+          || !Number.isInteger(quantity)
+          || quantity < 1
+          || quantity > 999
+        ) {
+          return []
+        }
+
         const product = catalogProducts.find(
-          (candidate) => canonicalizeSku(candidate.sku) === canonicalizeSku(sku),
+          (candidate) => canonicalizeSku(candidate.sku) === sku,
         )
-        if (!product || product.status !== 'active' || product.stock <= 0) return null
-        return {
-          product,
-          quantity: Math.min(Math.max(1, quantity), product.stock, 20),
+        if (
+          !product
+          || product.status !== 'active'
+          || product.stock < quantity
+        ) {
+          return []
         }
-      })
-      .filter((selection): selection is ValidatedSelection => !!selection)
 
-    const mergeCartSelectionItems = (
-      ...groups: ReadonlyArray<readonly { sku: string; quantity: number }[]>
-    ): Array<{ sku: string; quantity: number }> => {
-      const merged = new Map<string, { sku: string; quantity: number }>()
-
-      for (const group of groups) {
-        for (const item of group) {
-          const key = canonicalizeSku(item.sku)
-          if (!key || merged.has(key)) continue
-          merged.set(key, {
-            sku: item.sku,
-            quantity: Math.min(20, Math.max(1, item.quantity || 1)),
-          })
-        }
+        seen.add(sku)
+        selections.push({ product, quantity })
       }
 
-      return Array.from(merged.values())
+      return selections
     }
 
     const assessValidatedSelections = async (selections: ValidatedSelection[]) => {
@@ -529,28 +598,93 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const suppliedPlanItems = Array.isArray(body.cartPlan)
+    const packageCartDelta = (
+      selections: readonly ValidatedSelection[],
+    ): {
+      delta: ValidatedSelection[]
+      conflictingPanelSku: string | null
+      overTargetSku: string | null
+    } => {
+      const targetPanelSkus = new Set(
+        selections
+          .filter(({ product }) => classifySecurityProduct(product) === 'panel')
+          .map(({ product }) => canonicalizeSku(product.sku)),
+      )
+
+      const conflictingPanel = currentCart
+        .map((item) => ({
+          item,
+          product: catalogProducts.find(
+            (candidate) => canonicalizeSku(candidate.sku) === canonicalizeSku(item.sku),
+          ),
+        }))
+        .find(({ product }) => (
+          !!product
+          && classifySecurityProduct(product) === 'panel'
+          && !targetPanelSkus.has(canonicalizeSku(product.sku))
+        ))
+
+      if (conflictingPanel) {
+        return {
+          delta: [],
+          conflictingPanelSku: conflictingPanel.item.sku,
+          overTargetSku: null,
+        }
+      }
+
+      const currentQuantityBySku = new Map<string, number>()
+      for (const item of currentCart) {
+        const sku = canonicalizeSku(item.sku)
+        if (!sku) continue
+        currentQuantityBySku.set(
+          sku,
+          (currentQuantityBySku.get(sku) ?? 0) + Math.max(0, item.quantity || 0),
+        )
+      }
+
+      const delta: ValidatedSelection[] = []
+      for (const selection of selections) {
+        const sku = canonicalizeSku(selection.product.sku)
+        const existing = currentQuantityBySku.get(sku) ?? 0
+        if (existing > selection.quantity) {
+          return {
+            delta: [],
+            conflictingPanelSku: null,
+            overTargetSku: selection.product.sku,
+          }
+        }
+
+        const missing = selection.quantity - existing
+        if (missing > 0) {
+          delta.push({ product: selection.product, quantity: missing })
+        }
+      }
+
+      return {
+        delta,
+        conflictingPanelSku: null,
+        overTargetSku: null,
+      }
+    }
+
+    const legacyPlanItems = Array.isArray(body.cartPlan)
       ? body.cartPlan.slice(0, 50)
       : []
-
-    const recoveredPlanItems = suppliedPlanItems.length > 0
-      ? []
-      : body.messages
-          .filter((message) => message.role === 'model')
-          .slice(-4)
-          .reverse()
-          .map((message) => inferCartPlanFromAssistantText(message.text, catalogProducts))
-          .find((items) => items.length > 0) ?? []
-
-    const currentPlanItems = suppliedPlanItems.length > 0
-      ? suppliedPlanItems
-      : recoveredPlanItems
+    const currentPlanItems = latestSalesState?.cartPlan?.length
+      ? latestSalesState.cartPlan.slice(0, 50)
+      : latestSalesState
+        ? []
+        : legacyPlanItems
 
     const currentPlanSelections = validateCartSelectionItems(currentPlanItems)
     const currentPlanAssessment = currentPlanSelections.length > 0
       ? await assessValidatedSelections(currentPlanSelections)
       : { guard: null as string | null, capacityGuard: null as string | null }
-    const currentPlanReady = currentPlanSelections.length > 0 && !currentPlanAssessment.guard
+    const currentPlanReady = (
+      currentPlanSelections.length === currentPlanItems.length
+      && currentPlanSelections.length > 0
+      && !currentPlanAssessment.guard
+    )
 
     const cartPlanContext = currentPlanReady
       ? currentPlanSelections
@@ -564,35 +698,122 @@ export async function POST(req: NextRequest) {
       && !hasCartPlanModificationIntent(latestUserText)
     )
 
-    // Deterministic commit path: once BEE has already proposed a validated
-    // package, a terse approval never goes back through the LLM. This prevents
-    // the model from dropping the panel or entering a completeness-guard loop.
-    if (plainPlanApproval) {
-      const reply = 'حتماً 👌 همون پکیجی که با هم جمع‌بندی کردیم رو برات به سبد خرید اضافه کردم. سبد رو باز می‌کنم که تعدادها رو یک نگاه بندازی؛ اگر خواستی چیزی کم‌وزیاد کنیم، من هستم.'
+    const approvalAgainstStalePlan = (
+      currentPlanItems.length > 0
+      && !currentPlanReady
+      && isCartCommitIntent(latestUserText)
+      && !hasCartPlanModificationIntent(latestUserText)
+    )
 
-      const cartItems = currentPlanSelections.map(({ product, quantity }) => ({
-            id: product.id,
-            slug: product.slug,
-            categorySlug: product.categorySlug ?? 'products',
-            nameFa: product.name,
-            sku: product.sku,
-            price: product.price,
-            comparePrice: product.comparePrice ?? undefined,
-            quantity,
-            placeholderFrom: '#DBEAFE',
-            placeholderTo: '#BFDBFE',
-          }))
+    // A validated persisted plan is the only source for terse approvals such as
+    // «باشه» or «اوکی». The LLM is not called and cannot rewrite the package.
+    if (plainPlanApproval) {
+      const cartDelta = packageCartDelta(currentPlanSelections)
+
+      if (cartDelta.conflictingPanelSku) {
+        const reply = `توی سبدت الان پنل ${cartDelta.conflictingPanelSku} هست، ولی این پکیج پنل دیگه‌ای داره. چون BEE چیزی رو خودکار از سبد حذف نمی‌کنه، اول پنل قبلی رو حذف کن؛ بعد همین پکیج رو دقیق اضافه می‌کنم.`
+        await db.insert(chatMessages).values({
+          sessionId,
+          role: 'assistant',
+          content: reply,
+          metadata: {
+            requestId,
+            cartPlan: currentPlanItems,
+            packageMode: latestSalesState?.packageMode,
+            packageNeeds: latestSalesState?.packageNeeds,
+          },
+        })
+        return NextResponse.json({
+          message: reply,
+          session_id: sessionId,
+          cartItems: [],
+          cartPlan: currentPlanItems,
+          leadCaptured: false,
+        })
+      }
+
+      if (cartDelta.overTargetSku) {
+        const reply = `توی سبدت از ${cartDelta.overTargetSku} بیشتر از تعداد این پکیج هست. برای اینکه تعدادها دقیق بمونه چیزی اضافه نکردم؛ اول تعداد اون قلم رو در سبد اصلاح کن.`
+        await db.insert(chatMessages).values({
+          sessionId,
+          role: 'assistant',
+          content: reply,
+          metadata: {
+            requestId,
+            cartPlan: currentPlanItems,
+            packageMode: latestSalesState?.packageMode,
+            packageNeeds: latestSalesState?.packageNeeds,
+          },
+        })
+        return NextResponse.json({
+          message: reply,
+          session_id: sessionId,
+          cartItems: [],
+          cartPlan: currentPlanItems,
+          leadCaptured: false,
+        })
+      }
+
+      if (cartDelta.delta.length === 0) {
+        const reply = 'همین پکیج با تعدادهای لازم از قبل توی سبدت هست 👌 چیزی دوباره اضافه نکردم.'
+        await db.insert(chatMessages).values({
+          sessionId,
+          role: 'assistant',
+          content: reply,
+          metadata: {
+            requestId,
+            cartPlan: [],
+            packageMode: latestSalesState?.packageMode,
+            packageNeeds: latestSalesState?.packageNeeds,
+          },
+        })
+        return NextResponse.json({
+          message: reply,
+          session_id: sessionId,
+          cartItems: [],
+          cartPlan: [],
+          leadCaptured: false,
+        })
+      }
+
+      const reply = 'حتماً 👌 اقلامِ باقی‌موندهٔ همون پکیج تأییدشده رو با تعداد دقیق به سبد خرید اضافه کردم.'
+      const cartActionId = requestId ?? `cart-${sessionId}-${Date.now()}`
+      const cartActionItems = cartDelta.delta.map(({ product, quantity }) => ({
+        sku: product.sku,
+        quantity,
+      }))
+      const cartItems = cartDelta.delta.map(({ product, quantity }) => ({
+        id: product.id,
+        slug: product.slug,
+        categorySlug: product.categorySlug ?? 'products',
+        nameFa: product.name,
+        sku: product.sku,
+        price: product.price,
+        comparePrice: product.comparePrice ?? undefined,
+        quantity,
+        placeholderFrom: '#DBEAFE',
+        placeholderTo: '#BFDBFE',
+      }))
 
       await db.insert(chatMessages).values({
         sessionId,
         role: 'assistant',
         content: reply,
+        metadata: {
+          requestId,
+          cartActionId,
+          cartActionItems,
+          cartPlan: [],
+          packageMode: latestSalesState?.packageMode,
+          packageNeeds: latestSalesState?.packageNeeds,
+        },
       })
 
       return NextResponse.json({
         message: reply,
         session_id: sessionId,
         cartItems,
+        cartActionId,
         cartPlan: [],
         leadCaptured: false,
       })
@@ -600,12 +821,48 @@ export async function POST(req: NextRequest) {
 
 
     // ── Deterministic package engine ─────────────────────────────────────────
-    // For whole-system shopping, BEE no longer asks the LLM to invent a cart
-    // plan. Requirements are extracted from the customer's own messages, then
-    // a package is built from live catalog/stock/spec data.
+    const pendingPackageQuestion = latestSalesState?.packageQuestionKey ?? null
+    const previousPackageNeeds = latestSalesState?.packageNeeds ?? null
+
+    let packageNeeds = previousPackageNeeds
+      ? applyPackageRequirementAdjustment(previousPackageNeeds, latestUserText).needs
+      : extractSecurityNeeds(userTexts)
+    const pendingAnswer = applyPackageQuestionAnswer(
+      packageNeeds,
+      pendingPackageQuestion,
+      latestUserText,
+    )
+    if (pendingAnswer.handled) packageNeeds = pendingAnswer.needs
+
+    let assumedMotionCoverage = false
+    if (
+      pendingPackageQuestion === 'motion_areas'
+      && isUnknownPackageAnswer(latestUserText)
+    ) {
+      // The customer explicitly delegated the choice to BEE. We may offer a
+      // clearly-labelled base package, but must not call the assumed coverage
+      // a complete site design.
+      packageNeeds = { ...packageNeeds, motionAreas: 1 }
+      assumedMotionCoverage = true
+    }
+
     const packageFlowActive = (
-      isSecurityPackageConversation(userTexts)
-      && userTexts.slice(-6).some(isPackageRecommendationIntent)
+      !isExplicitPanelOnlyRequest(latestUserText)
+      && (
+        latestSalesState?.packageMode === 'security_system'
+        || isSecurityPackageConversation(userTexts)
+      )
+      && (
+        isPackageRecommendationIntent(latestUserText)
+        || isPackageRequirementsUpdate(latestUserText)
+        || isExplicitCartPurchaseIntent(latestUserText)
+        || pendingAnswer.handled
+        || (
+          !!pendingPackageQuestion
+          && isUnknownPackageAnswer(latestUserText)
+        )
+        || approvalAgainstStalePlan
+      )
     )
 
     if (packageFlowActive) {
@@ -640,14 +897,23 @@ export async function POST(req: NextRequest) {
           .map((spec) => ({ key: spec.key, value: spec.value })),
       }))
 
-      const needs = extractSecurityNeeds(userTexts)
-      const packagePlan = buildDeterministicSecurityPackage(plannerProducts, needs)
+      const packagePlan = buildDeterministicSecurityPackage(
+        plannerProducts,
+        packageNeeds,
+      )
 
       if (packagePlan.status === 'needs_input') {
         await db.insert(chatMessages).values({
           sessionId,
           role: 'assistant',
           content: packagePlan.question,
+          metadata: {
+            requestId,
+            packageMode: 'security_system',
+            packageQuestionKey: packagePlan.questionKey,
+            packageNeeds: packagePlan.needs,
+            cartPlan: [],
+          },
         })
 
         return NextResponse.json({
@@ -664,6 +930,12 @@ export async function POST(req: NextRequest) {
           sessionId,
           role: 'assistant',
           content: packagePlan.message,
+          metadata: {
+            requestId,
+            packageMode: 'security_system',
+            packageNeeds: packagePlan.needs,
+            cartPlan: [],
+          },
         })
 
         return NextResponse.json({
@@ -675,25 +947,30 @@ export async function POST(req: NextRequest) {
         })
       }
 
-      const deterministicSelections = packagePlan.items
-        .map((item) => ({
-          product: catalogProducts.find((product) => product.id === item.product.id),
-          quantity: item.quantity,
-        }))
-        .filter(
-          (selection): selection is ValidatedSelection => !!selection.product,
-        )
+      const deterministicItems = packagePlan.items.map((item) => ({
+        sku: item.product.sku,
+        quantity: item.quantity,
+      }))
+      const deterministicSelections = validateCartSelectionItems(deterministicItems)
+      const exactSelection = deterministicSelections.length === deterministicItems.length
+      const deterministicAssessment = exactSelection
+        ? await assessValidatedSelections(deterministicSelections)
+        : { guard: 'موجودی یکی از اقلام این پکیج تغییر کرده و باید ترکیب را دوباره بسازم.' as string | null, capacityGuard: null as string | null }
 
-      const deterministicAssessment = await assessValidatedSelections(deterministicSelections)
-      if (deterministicAssessment.guard) {
-        const message = deterministicAssessment.capacityGuard
-          ? deterministicAssessment.guard
-          : 'ترکیب پیشنهادی از کنترل نهایی عبور نکرد؛ چیزی رو حدسی وارد سبد نمی‌کنم. یک مورد از اطلاعات یا موجودی باید دوباره بررسی بشه.'
+      if (!exactSelection || deterministicAssessment.guard) {
+        const message = deterministicAssessment.guard
+          ?? 'موجودی یکی از اقلام این پکیج تغییر کرده و باید ترکیب را دوباره بسازم.'
 
         await db.insert(chatMessages).values({
           sessionId,
           role: 'assistant',
           content: message,
+          metadata: {
+            requestId,
+            packageMode: 'security_system',
+            packageNeeds: packagePlan.needs,
+            cartPlan: [],
+          },
         })
 
         return NextResponse.json({
@@ -705,28 +982,98 @@ export async function POST(req: NextRequest) {
         })
       }
 
-      const openingCount = (needs.doors ?? 0) + (needs.windows ?? 0)
-      const areaText = needs.areaM2
-        ? `برای خونه ${needs.areaM2.toLocaleString('fa-IR')} متری با ${needs.windows?.toLocaleString('fa-IR')} پنجره و ${needs.doors?.toLocaleString('fa-IR')} در ورودی،`
-        : `برای ${needs.windows?.toLocaleString('fa-IR')} پنجره و ${needs.doors?.toLocaleString('fa-IR')} در ورودی،`
+      const roleLabel = (product: DeterministicPackageProduct): string => {
+        const role = classifySecurityProduct(product)
+        if (role === 'panel') return 'پنل مرکزی'
+        if (role === 'opening_sensor') return 'حفاظت در و پنجره'
+        if (role === 'motion_sensor') return 'پوشش فضاهای اصلی'
+        if (role === 'intrusion_sensor') return 'حسگر تشخیص نفوذ'
+        return product.name
+      }
 
-      const panelItem = packagePlan.items[0]!
-      const openingItem = packagePlan.items[1]!
-      const motionItem = packagePlan.items[2]!
+      const designLabel = packagePlan.design === 'wireless'
+        ? 'بی‌سیم'
+        : packagePlan.design === 'hybrid'
+          ? 'ترکیبی'
+          : 'سیمی با زون‌های مستقل'
+
       const totalToman = Math.floor(packagePlan.totalPrice / 10).toLocaleString('fa-IR')
+      const needsSummary = [
+        packagePlan.needs.areaM2
+          ? `${packagePlan.needs.areaM2.toLocaleString('fa-IR')} متر`
+          : null,
+        packagePlan.needs.windows !== null
+          ? `${packagePlan.needs.windows.toLocaleString('fa-IR')} پنجره`
+          : null,
+        packagePlan.needs.doors !== null
+          ? `${packagePlan.needs.doors.toLocaleString('fa-IR')} در ورودی`
+          : null,
+        packagePlan.needs.motionAreas !== null
+          ? `${packagePlan.needs.motionAreas.toLocaleString('fa-IR')} فضای اصلی`
+          : null,
+      ].filter(Boolean).join('، ')
+
+      const itemLines = packagePlan.items.map((item) => (
+        `• ${item.product.sku} ×${item.quantity.toLocaleString('fa-IR')} — ${roleLabel(item.product)}`
+      ))
+
+      const capacityNotes: string[] = []
+      if (
+        packagePlan.wiredDetectorCount > 0
+        && packagePlan.panelWiredCapacity !== null
+      ) {
+        capacityNotes.push(
+          `${packagePlan.wiredDetectorCount.toLocaleString('fa-IR')} نقطه سیمی مستقل از ${packagePlan.panelWiredCapacity.toLocaleString('fa-IR')} زون سیمی پنل استفاده می‌کند`,
+        )
+      }
+      if (
+        packagePlan.wirelessDetectorCount > 0
+        && packagePlan.panelWirelessCapacity !== null
+      ) {
+        capacityNotes.push(
+          `${packagePlan.wirelessDetectorCount.toLocaleString('fa-IR')} حسگر بی‌سیم داخل ظرفیت ${packagePlan.panelWirelessCapacity.toLocaleString('fa-IR')} زون بی‌سیم پنل است`,
+        )
+      }
 
       const recommendation = [
-        `${areaText} این پکیج پایه سیمی رو پیشنهاد می‌دم:`,
-        `• ${panelItem.product.sku} ×۱ — پنل مرکزی`,
-        `• ${openingItem.product.sku} ×${openingCount.toLocaleString('fa-IR')} — برای همه درها و پنجره‌ها`,
-        `• ${motionItem.product.sku} ×${motionItem.quantity.toLocaleString('fa-IR')} — پوشش پایه فضای داخلی`,
-        `جمع: حدود ${totalToman} تومان. این ترکیب ${packagePlan.wiredDetectorCount.toLocaleString('fa-IR')} نقطه سیمی دارد و پنل انتخابی ظرفیت ثبت‌شده ${packagePlan.panelWiredCapacity.toLocaleString('fa-IR')} زون سیمی دارد.`,
-        'اگر اوکیه بگو «بذار تو سبد»؛ همین ترکیب رو مستقیم اضافه می‌کنم.',
+        assumedMotionCoverage
+          ? `با فرض پایهٔ یک فضای اصلی، برای ${needsSummary || 'نیاز فعلی'} این پکیج ${designLabel} رو پیشنهاد می‌دم:`
+          : `برای ${needsSummary || 'نیاز فعلی'} این پکیج ${designLabel} رو پیشنهاد می‌دم:`,
+        ...itemLines,
+        ...(capacityNotes.length > 0
+          ? [`کنترل ظرفیت: ${capacityNotes.join(' و ')}.`]
+          : []),
+        `جمع فعلی: حدود ${totalToman} تومان.`,
+        approvalAgainstStalePlan
+          ? 'ترکیب قبلی با موجودی فعلی قابل ثبت نبود؛ این نسخه به‌روز شده‌ست. اگر تأییدش می‌کنی دوباره بگو «بذار تو سبد».'
+          : assumedMotionCoverage
+            ? 'این یک پکیج پایه است؛ اگر فضای اصلی بیشتری داری تعداد چشمی‌ها رو قبل از خرید اصلاح می‌کنیم.'
+            : 'اگر اوکیه بگو «بذار تو سبد»؛ همین ترکیب دقیق رو اضافه می‌کنم.',
       ].join('\n')
 
-      const wantsImmediatePurchase = isExplicitCartPurchaseIntent(latestUserText)
-      const cartItems = wantsImmediatePurchase
-        ? deterministicSelections.map(({ product, quantity }) => ({
+      const wantsImmediatePurchase = (
+        isExplicitCartPurchaseIntent(latestUserText)
+        && !assumedMotionCoverage
+        && !approvalAgainstStalePlan
+      )
+      const plannedCartDelta = packageCartDelta(deterministicSelections)
+      const purchaseBlocked = (
+        !!plannedCartDelta.conflictingPanelSku
+        || !!plannedCartDelta.overTargetSku
+      )
+      const shouldPurchase = wantsImmediatePurchase && !purchaseBlocked
+      const alreadySatisfied = shouldPurchase && plannedCartDelta.delta.length === 0
+      const cartActionId = shouldPurchase && !alreadySatisfied
+        ? requestId ?? `cart-${sessionId}-${Date.now()}`
+        : undefined
+      const cartActionItems = shouldPurchase && !alreadySatisfied
+        ? plannedCartDelta.delta.map(({ product, quantity }) => ({
+            sku: product.sku,
+            quantity,
+          }))
+        : undefined
+      const cartItems = shouldPurchase && !alreadySatisfied
+        ? plannedCartDelta.delta.map(({ product, quantity }) => ({
             id: product.id,
             slug: product.slug,
             categorySlug: product.categorySlug ?? 'products',
@@ -740,128 +1087,105 @@ export async function POST(req: NextRequest) {
           }))
         : []
 
-      const message = wantsImmediatePurchase
-        ? 'حتماً 👌 پکیج مناسب رو از روی اطلاعاتی که دادی ساختم و مستقیم به سبد خرید اضافه کردم.'
-        : recommendation
+      const message = plannedCartDelta.conflictingPanelSku && wantsImmediatePurchase
+        ? `توی سبدت پنل ${plannedCartDelta.conflictingPanelSku} هست و این پکیج پنل متفاوتی داره. چیزی اضافه نکردم؛ اول پنل قبلی رو حذف کن تا ترکیب دو پنله نشه.`
+        : plannedCartDelta.overTargetSku && wantsImmediatePurchase
+          ? `توی سبدت از ${plannedCartDelta.overTargetSku} بیشتر از تعداد این پکیج هست. چیزی اضافه نکردم تا تعدادها ناخواسته بیشتر نشه.`
+          : alreadySatisfied
+            ? 'همین پکیج با تعدادهای لازم از قبل توی سبدت هست 👌 چیزی دوباره اضافه نکردم.'
+            : shouldPurchase
+              ? 'حتماً 👌 اقلامِ باقی‌موندهٔ همین پکیج رو با تعداد دقیق به سبد خرید اضافه کردم.'
+              : recommendation
+
+      const persistedPlan = shouldPurchase
+        ? []
+        : deterministicSelections.map(({ product, quantity }) => ({
+            sku: product.sku,
+            quantity,
+          }))
 
       await db.insert(chatMessages).values({
         sessionId,
         role: 'assistant',
         content: message,
+        metadata: {
+          requestId,
+          cartActionId,
+          cartActionItems,
+          cartPlan: persistedPlan,
+          packageMode: 'security_system',
+          packageNeeds: packagePlan.needs,
+        },
       })
 
       return NextResponse.json({
         message,
         session_id: sessionId,
         cartItems,
-        cartPlan: wantsImmediatePurchase
-          ? []
-          : packagePlan.items.map((item) => ({
-              sku: item.product.sku,
-              quantity: item.quantity,
-            })),
+        cartActionId,
+        cartPlan: persistedPlan,
         leadCaptured: false,
       })
     }
 
-    const systemPrompt = buildSystemPrompt(
-      catalogContext,
-      mentionedContext,
-      cartContext,
-      cartPlanContext,
-    )
-    const rawReply = await chat(body.messages, systemPrompt)
-    const signals = extractCartSignals(rawReply)
-    const cleanText = signals.cleanText
-
+    // ── Deterministic direct-product purchase ───────────────────────────────
+    // Outside the whole-system package flow, a product can enter the cart only
+    // when the customer's latest message resolves to explicit catalog items.
     const directCommitIntent = isExplicitCartPurchaseIntent(latestUserText)
-    const inferredReplyItems = inferCartPlanFromAssistantText(cleanText, catalogProducts)
-    const requestedCartItems = directCommitIntent
-      ? mergeCartSelectionItems(
-          signals.addItems,
-          signals.planItems,
-          inferredReplyItems,
-        )
-      : []
-
-    let validatedSelections = validateCartSelectionItems(requestedCartItems)
-
-    // Backwards-compatible recovery for direct buy requests where the model
-    // mentions a single panel in the reply but accidentally omits it from ADD.
-    if (enforceCompleteness && directCommitIntent && validatedSelections.length > 0) {
-      const selectedHasPanel = validatedSelections.some(
-        ({ product }) => classifySecurityProduct({
-          sku: product.sku,
-          name: product.name,
-          category: product.category,
-          categorySlug: product.categorySlug,
-          description: product.description,
-        }) === 'panel',
+    if (directCommitIntent) {
+      const explicitlyMentioned = findMentionedProducts(
+        latestUserText,
+        catalogProducts,
       )
 
-      if (!selectedHasPanel) {
-        const purchasablePanels = catalogProducts.filter((product) => (
-          product.status === 'active'
-          && product.stock > 0
-          && classifySecurityProduct({
-            sku: product.sku,
-            name: product.name,
-            category: product.category,
-            categorySlug: product.categorySlug,
-            description: product.description,
-          }) === 'panel'
-        ))
-        const recoveredPanel = findLatestSingleMentionedProduct(
-          [
-            cleanText,
-            ...body.messages.slice(-10).reverse().map((message) => message.text),
-          ],
-          purchasablePanels,
+      const referentialPurchase = /(همین|همون|همان|این\s*(?:رو|را)?)/i.test(latestUserText)
+      const latestAssistantBeforeUser = [...persistedMessages]
+        .reverse()
+        .find((message) => message.role === 'assistant')
+
+      const referencedProducts = (
+        explicitlyMentioned.length === 0
+        && referentialPurchase
+        && latestAssistantBeforeUser
+      )
+        ? findMentionedProducts(latestAssistantBeforeUser.content, catalogProducts)
+        : []
+
+      const requestedProducts = explicitlyMentioned.length > 0
+        ? explicitlyMentioned
+        : referencedProducts.length === 1
+          ? referencedProducts
+          : []
+
+      if (requestedProducts.length > 0) {
+        const unavailable = requestedProducts.filter(
+          (product) => product.status !== 'active' || product.stock < 1,
         )
-        if (recoveredPanel) {
-          validatedSelections = [
-            { product: recoveredPanel, quantity: 1 },
-            ...validatedSelections,
-          ]
+
+        if (unavailable.length > 0) {
+          const message = `الان ${unavailable.map((product) => product.sku).join('، ')} موجودی قابل خرید نداره؛ چیزی به سبد اضافه نکردم.`
+          await db.insert(chatMessages).values({
+            sessionId,
+            role: 'assistant',
+            content: message,
+            metadata: { requestId },
+          })
+
+          return NextResponse.json({
+            message,
+            session_id: sessionId,
+            cartItems: [],
+            cartPlan: [],
+            leadCaptured: false,
+          })
         }
-      }
-    }
 
-    const cartActionAttempted = directCommitIntent && validatedSelections.length > 0
-    const actionAssessment = cartActionAttempted
-      ? await assessValidatedSelections(validatedSelections)
-      : { guard: null as string | null, capacityGuard: null as string | null }
-    const cartGuard = actionAssessment.guard
-
-    // Capture a structured proposal for the next turn. A rogue ADD marker on a
-    // non-purchase turn is demoted to PLAN instead of mutating the browser cart.
-    const proposedItems = !directCommitIntent
-      ? mergeCartSelectionItems(
-          signals.planItems,
-          signals.addItems,
-          inferredReplyItems,
-        )
-      : []
-    const proposedSelections = validateCartSelectionItems(proposedItems)
-    const proposalAssessment = proposedSelections.length > 0
-      ? await assessValidatedSelections(proposedSelections)
-      : { guard: null as string | null, capacityGuard: null as string | null }
-    const proposalGuard = proposalAssessment.guard
-
-    // Guards may block a real cart mutation, but they must never hijack an
-    // ordinary recommendation turn. An invalid proposed plan is simply not
-    // persisted; the customer still sees BEE's actual recommendation.
-    const reply = cartGuard
-      ? actionAssessment.capacityGuard
-        ? `${cartGuard}\n\nاگر بخوای، ترکیب رو اصلاح می‌کنم تا با ظرفیت واقعی پنل و نوع حسگرها جور دربیاد و بعد یکجا وارد سبدش کنیم.`
-        : `${cartGuard}\n\nفقط همون یک موردی که واقعاً برای خرید کمه رو مشخص می‌کنیم و بعد یکجا جمعش می‌کنم.`
-      : cartActionAttempted
-        ? `${cleanText}\n\n✅ موارد تأییدشده به سبد خرید اضافه شدند.`
-        : cleanText
-
-    const cartItems = !cartActionAttempted || cartGuard
-      ? []
-      : validatedSelections.map(({ product, quantity }) => ({
+        const cartActionId = requestId ?? `cart-${sessionId}-${Date.now()}`
+        const cartActionItems = requestedProducts.map((product) => ({
+          sku: product.sku,
+          quantity: 1,
+        }))
+        const cartItems = requestedProducts.map((product) => ({
           id: product.id,
           slug: product.slug,
           categorySlug: product.categorySlug ?? 'products',
@@ -869,38 +1193,88 @@ export async function POST(req: NextRequest) {
           sku: product.sku,
           price: product.price,
           comparePrice: product.comparePrice ?? undefined,
-          quantity,
+          quantity: 1,
           placeholderFrom: '#DBEAFE',
           placeholderTo: '#BFDBFE',
         }))
+        const message = requestedProducts.length === 1
+          ? `حتماً 👌 ${requestedProducts[0]!.sku} رو به سبد خرید اضافه کردم.`
+          : `حتماً 👌 ${requestedProducts.map((product) => product.sku).join('، ')} رو به سبد خرید اضافه کردم.`
 
-    const cartPlan = cartActionAttempted
-      ? []
-      : proposalGuard
-        ? []
-        : proposedSelections.map(({ product, quantity }) => ({
-            sku: product.sku,
-            quantity,
-          }))
+        await db.insert(chatMessages).values({
+          sessionId,
+          role: 'assistant',
+          content: message,
+          metadata: {
+            requestId,
+            cartActionId,
+            cartActionItems,
+          },
+        })
 
-    // ── 4. Persist assistant response ─────────────────────────────────────────
+        return NextResponse.json({
+          message,
+          session_id: sessionId,
+          cartItems,
+          cartActionId,
+          cartPlan: [],
+          leadCaptured: false,
+        })
+      }
+
+      if (referentialPurchase && referencedProducts.length > 1) {
+        const message = `برای اینکه محصول اشتباه وارد سبد نشه، اسم مدل رو بگو؛ اینجا چند مدل مطرح شده: ${referencedProducts.map((product) => product.sku).join('، ')}.`
+        await db.insert(chatMessages).values({
+          sessionId,
+          role: 'assistant',
+          content: message,
+          metadata: { requestId },
+        })
+
+        return NextResponse.json({
+          message,
+          session_id: sessionId,
+          cartItems: [],
+          cartPlan: [],
+          leadCaptured: false,
+        })
+      }
+    }
+
+    // ── LLM text-only conversation ──────────────────────────────────────────
+    // The model can explain and advise, but it cannot mutate cart state.
+    const systemPrompt = buildSystemPrompt(
+      catalogContext,
+      mentionedContext,
+      cartContext,
+      cartPlanContext,
+    )
+    const rawReply = await chat(canonicalMessages.slice(-24), systemPrompt)
+    const sanitized = extractCartSignals(rawReply).cleanText
+    const phone = extractIranMobile(latestUserText)
+    let reply = sanitized || 'برای این مورد پاسخ قابل‌اعتماد آماده نشد؛ لطفاً سؤال رو یک‌بار کوتاه‌تر بفرست.'
+
+    if (phone && !reply.startsWith('✅ شماره')) {
+      reply = `✅ شماره ${phone} ثبت شد.\n\n${reply}`
+    }
+
     await db.insert(chatMessages).values({
       sessionId,
       role: 'assistant',
       content: reply,
+      metadata: {
+        requestId,
+        extractedPhone: phone ?? undefined,
+      },
     })
-
-    // ── 5. Detect lead (phone number) ─────────────────────────────────────────
-    const phoneMatch = latestUserText.match(/(\+98|0)?9\d{9}/)
-    const leadCaptured = !!phoneMatch && reply.includes('✅')
 
     return NextResponse.json({
       message: reply,
       session_id: sessionId,
-      cartItems,
-      cartPlan,
-      leadCaptured,
-      phone: leadCaptured ? phoneMatch![0] : undefined,
+      cartItems: [],
+      cartPlan: [],
+      leadCaptured: !!phone,
+      phone: phone ?? undefined,
     })
   } catch (err) {
     console.error('[chat]', err)
