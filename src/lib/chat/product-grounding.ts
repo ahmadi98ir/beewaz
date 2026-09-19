@@ -174,11 +174,16 @@ function parseCartPayloads(payloads: readonly string[]): CartDirectiveItem[] {
 
 function stripInternalCartAnnotations(value: string): string {
   return value
-    .replace(/\s*\[BEE_CART_(?:ADD|PLAN):[^\]]+\]\s*/gi, '\n')
+    // Strip any bracketed wrapper that contains our internal marker, including
+    // model variants such as:
+    // [وارد سبد خرید می‌کنم: BEE_CART_ADD:BH-21*1,MG10*8]
+    .replace(/\s*\[[^\]]*BEE_CART_(?:ADD|PLAN):[^\]]+\]\s*/gi, '\n')
+    .replace(/\s*BEE_CART_(?:ADD|PLAN):[^\n\]]+\s*/gi, '\n')
     .replace(
       /\s*\[\s*(?:به\s+سبد\s+اضافه\s+می(?:\u200c|\s)*شود|افزودن\s+به\s+سبد(?:\s+خرید)?|اضافه\s+به\s+سبد(?:\s+خرید)?|ربط\s+به\s+سبد\s+خرید)\s*:[\s\S]*?\]\s*/gi,
       '\n',
     )
+    .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
 
@@ -191,8 +196,11 @@ function stripInternalCartAnnotations(value: string): string {
  * as «اوکیه» from losing the panel/SKU context or entering a guard loop.
  */
 export function extractCartSignals(text: string): CartSignals {
-  const addMachineMatches = Array.from(text.matchAll(/\[BEE_CART_ADD:([^\]]+)\]/gi))
-  const planMachineMatches = Array.from(text.matchAll(/\[BEE_CART_PLAN:([^\]]+)\]/gi))
+  // Do not require the marker to start immediately after "[". Some providers
+  // wrap it in extra prose even when instructed not to. We still accept only
+  // the narrow BEE_CART_* payload grammar below.
+  const addMachineMatches = Array.from(text.matchAll(/BEE_CART_ADD:\s*([^\]\n]+)/gi))
+  const planMachineMatches = Array.from(text.matchAll(/BEE_CART_PLAN:\s*([^\]\n]+)/gi))
   const persianAddMatches = Array.from(text.matchAll(
     /\[\s*(?:به\s+سبد\s+اضافه\s+می(?:\u200c|\s)*شود|افزودن\s+به\s+سبد(?:\s+خرید)?|اضافه\s+به\s+سبد(?:\s+خرید)?|ربط\s+به\s+سبد\s+خرید)\s*:\s*([^\]]+)\]/gi,
   ))
@@ -220,6 +228,86 @@ export function extractCartDirective(text: string): CartDirective {
   }
 }
 
+
+export interface CartPlanProduct extends GroundedProduct {
+  name: string
+}
+
+/**
+ * Best-effort deterministic recovery from a visible assistant recommendation.
+ * This is only a fallback when the provider ignored BEE_CART_PLAN. It recognizes
+ * catalog SKUs plus a very small set of stable Persian product aliases and only
+ * trusts explicit quantities ("8 عدد", "×2"). The result is still validated
+ * against live catalog stock and the security guards before it can be purchased.
+ */
+export function inferCartPlanFromAssistantText<T extends CartPlanProduct>(
+  text: string,
+  products: readonly T[],
+): CartDirectiveItem[] {
+  const normalizedText = normalizeDigits(text)
+    .replace(/ي/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .replace(/[\u200c\u200f\u202a-\u202e]/g, ' ')
+    .toLocaleLowerCase('fa-IR')
+
+  const lines = normalizedText
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  const aliasMap: Record<string, string[]> = {
+    MG10: ['مگنت سیمی', 'مگنت در و پنجره سیمی'],
+    MG11: ['مگنت بی سیم', 'مگنت بی‌سیم'],
+    P100: ['چشمی حرکتی', 'سنسور حرکتی'],
+    BH20: ['پنل bh20', 'دزدگیر bh20'],
+    BH21: ['پنل bh21', 'دزدگیر bh21'],
+  }
+
+  const inferred: CartDirectiveItem[] = []
+
+  for (const product of products) {
+    const sku = canonicalizeSku(product.sku)
+    if (!sku) continue
+
+    const normalizedName = normalizeDigits(product.name)
+      .replace(/ي/g, 'ی')
+      .replace(/ك/g, 'ک')
+      .replace(/[\u200c\u200f\u202a-\u202e]/g, ' ')
+      .toLocaleLowerCase('fa-IR')
+      .replace(/\s+/g, ' ')
+      .trim()
+
+    const aliases = [
+      ...(aliasMap[sku] ?? []),
+      normalizedName,
+    ].filter((alias) => alias.length >= 5)
+
+    const line = lines.find((candidate) => {
+      const candidateSkuText = canonicalizeSku(candidate)
+      if (candidateSkuText.includes(sku)) return true
+      return aliases.some((alias) => candidate.includes(alias))
+    })
+
+    if (!line) continue
+
+    const explicitQty =
+      line.match(/(?:×|x|\*)\s*(\d{1,2})/i)?.[1]
+      ?? line.match(/(\d{1,2})\s*(?:عدد|تا)(?:\s|$)/i)?.[1]
+
+    const panelLike = /^BH\d+$/i.test(sku)
+    const quantity = explicitQty
+      ? Math.min(20, Math.max(1, Number.parseInt(explicitQty, 10)))
+      : panelLike
+        ? 1
+        : null
+
+    if (!quantity || !Number.isFinite(quantity)) continue
+    inferred.push({ sku, quantity })
+  }
+
+  return inferred
+}
+
 export function isCartCommitIntent(text: string): boolean {
   const normalized = normalizeDigits(text)
     .replace(/ي/g, 'ی')
@@ -236,7 +324,7 @@ export function isCartCommitIntent(text: string): boolean {
     || /(می\s*خوام\s*بخر|میخوام\s*بخر|بخرش|بخرمش|خریدش\s*کن|نهایی\s*کن)/i.test(normalized)
     || /^(?:آره\s*)?(?:اوکی|باشه|قبوله|موافقم|تایید|تأیید)(?:\s|$)/i.test(normalized)
     || /(همین(?:ه|\s+خوبه|\s+اوکیه)|اگر\s+خودت\s+میگی\s+خوبه)/i.test(normalized)
-    || /(?:همون|همان)[^\n]{0,48}(?:بذار|بزار|انتخاب\s*کن|بردار)/i.test(normalized)
+    || /(?:همین(?:و|\s*رو|\s*را)?|همون|همان(?:\s*رو|\s*را)?)[^\n]{0,64}(?:بذار|بزار|انتخاب\s*کن|بردار|می\s*برم|میبرم)/i.test(normalized)
   )
 }
 

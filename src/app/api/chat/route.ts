@@ -10,6 +10,7 @@ import {
   extractCartSignals,
   findLatestSingleMentionedProduct,
   hasCartPlanModificationIntent,
+  inferCartPlanFromAssistantText,
   isCartCommitIntent,
   findMentionedProducts,
   productAvailabilityLabel,
@@ -268,12 +269,13 @@ function buildSystemPrompt(
 - اگر دادهٔ محصول در دسترس نبود، صریح بگو امکان تأیید موجودی لحظه‌ای نداری و حدس نزن.
 - اگر بخش «محصول‌های تشخیص‌داده‌شده» وجود دارد، حقایق آن بخش بر هر برداشت قبلی یا حدس اولویت دارند.
 - اگر کاربر بعد از مقایسه می‌پرسد «خودت کدومو پیشنهاد میدی؟»، فقط با تکیه بر نیازهای گفته‌شده و تفاوت‌های مستند پیشنهاد بده.
-- اگر اطلاعات لازم برای انتخاب قطعی کم است، به‌جای انتخاب سلیقه‌ای حداکثر دو سؤال تعیین‌کننده بپرس (مثلاً تعداد نقاط/زون موردنیاز، نیاز به نوع ارتباط خاص، یا محدودیت بودجه).
+- اگر اطلاعات لازم برای انتخاب قطعی کم است، فقط یک سؤال ساده و تعیین‌کننده بپرس؛ چند سؤال پشت‌سرهم نپرس.
+- هرگز تعداد در، پنجره، اتاق، حسگر یا نقطه حفاظتی را از خودت نساز. اگر مشتری نمی‌داند، یا فقط یک سؤال ساده بپرس، یا یک «پکیج پایه» با فرض صریح پیشنهاد بده و روشن بگو این فرض جای بازدید/شمارش واقعی را نمی‌گیرد.
 - در پیشنهاد نهایی، دقیقاً توضیح بده کدام نیاز کاربر به کدام مشخصهٔ ثبت‌شده وصل شده است؛ از «بهتر/حرفه‌ای‌تر/پیشرفته‌تر» بدون معیار مشخص استفاده نکن.
 - اگر کاربر می‌گوید «اونی که بهتره»، «بهتر» را مطلق تفسیر نکن. فقط مدلی را انتخاب کن که برای نیازهای همین مشتری با یک یا چند تفاوت مستند مناسب‌تر باشد و همان معیارها را نام ببر.
 - اگر انتخاب پنل به تعداد حسگرهای سیمی مربوط است، تعداد نقاط سیمی را صریح جمع بزن و ظرفیت زون سیمی هر پنل را با عدد ثبت‌شده مقایسه کن؛ از عبارت کلی «امکانات بیشتری دارد» به‌جای این استدلال استفاده نکن.
 - قبل از نهایی‌کردن پنل، نوع اتصال سنسورهای پیشنهادی (سیمی/بی‌سیم) را با ظرفیت زون‌های ثبت‌شده پنل تطبیق بده. اگر تعداد حسگرهای سیمی از تعداد زون‌های سیمی بیشتر است، بدون توضیح درباره طراحی زون/گروه‌بندی یا جایگزین بی‌سیم ادعای «کامل و آماده نصب» نکن.
-- متراژ خانه به‌تنهایی برای انتخاب پنل کافی نیست. اگر کاربر مبتدی است، با زبان ساده از تعداد درهای ورودی، پنجره‌های قابل‌دسترسی، اتاق‌ها/فضاهای اصلی و ترجیح نصب سیمی/بی‌سیم کمک بگیر؛ اگر خودش نمی‌داند، توضیح بده هرکدام چه اثری در تعداد زون و سنسور دارد.
+- متراژ خانه به‌تنهایی برای انتخاب پنل کافی نیست. برای کاربر مبتدی اول فقط تعداد درها و پنجره‌های قابل‌دسترسی را بپرس. سؤال سیمی/بی‌سیم را فقط وقتی واقعاً برای انتخاب نهایی لازم است مطرح کن؛ اصطلاح «زون» را تا وقتی مشتری فنی نپرسیده وارد مکالمه نکن.
 - موجودی عددی دقیق انبار را فقط وقتی مشتری مشخصاً درباره تعداد موجودی پرسید بیان کن؛ در حالت عادی فقط «موجود» یا «ناموجود» بگو.
 
 نقش متخصص طراحی سیستم:
@@ -317,7 +319,9 @@ ${cartPlanContext}
 سبک پاسخ:
 - لحن BEE باید گرم، صمیمیِ حرفه‌ای، مطمئن و مشتری‌پسند باشد؛ مثل یک کارشناس فروش خوش‌برخورد ایرانی، نه یک فرم اداری یا ربات خشک.
 - فارسی طبیعی و محاوره‌ایِ محترمانه استفاده کن. به‌جای «لطفاً اطلاعات را اعلام کنید» بگو «فقط تعداد در و پنجره رو بهم بگو، بقیه‌ش با من». از «نگران نباشید» و لحن بالا به پایین هم استفاده نکن.
-- برای مشتری مبتدی، اول نتیجه و پیشنهاد روشن را بگو و بعد دلیل کوتاه بده. تا وقتی واقعاً لازم نیست، پاسخ را با تیترهای رسمی و لیست‌های طولانی سنگین نکن.
+- برای مشتری مبتدی، اول نتیجه و پیشنهاد روشن را بگو و بعد دلیل کوتاه بده. پاسخ عادی حداکثر ۴ تا ۶ خط کوتاه باشد؛ تیترهای رسمی، توضیح آموزشی طولانی و جمع‌بندی تکراری نده مگر مشتری خودش جزئیات بخواهد.
+- در هر نوبت حداکثر یک سؤال بپرس.
+- اگر مشتری گفت «خودت انتخاب کن»، دوباره تصمیم را به خودش پاس نده؛ بر اساس داده قطعی موجود بهترین ترکیب متناسب با اطلاعات فعلی را پیشنهاد بده و فقط اگر یک داده واقعاً حیاتی کم است همان یک مورد را بپرس.
 - اگر عددی را از حرف مشتری استخراج کردی، قبل از پاسخ جمع و تطبیقش را چک کن؛ مثلاً ۶ پنجره + ۲ در = ۸ مگنت، نه عدد دیگری.
 - هیچ‌وقت درباره تعداد زون، سیمی/بی‌سیم یا قابلیت پنل عبارتی مثل «چندین سنسور را کنترل می‌کند» ننویس مگر اینکه همان ادعا مستقیماً از مشخصات ساختاریافتهٔ دیتابیس پشتیبانی شود.
 - جمله‌های کوتاه، روشن و روان بنویس و از تکرار سؤال یا عبارت‌های بوروکراتیک دوری کن.
@@ -495,9 +499,23 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const currentPlanItems = Array.isArray(body.cartPlan)
+    const suppliedPlanItems = Array.isArray(body.cartPlan)
       ? body.cartPlan.slice(0, 50)
       : []
+
+    const recoveredPlanItems = suppliedPlanItems.length > 0
+      ? []
+      : body.messages
+          .filter((message) => message.role === 'model')
+          .slice(-4)
+          .reverse()
+          .map((message) => inferCartPlanFromAssistantText(message.text, catalogProducts))
+          .find((items) => items.length > 0) ?? []
+
+    const currentPlanItems = suppliedPlanItems.length > 0
+      ? suppliedPlanItems
+      : recoveredPlanItems
+
     const currentPlanSelections = validateCartSelectionItems(currentPlanItems)
     const cartPlanContext = currentPlanSelections.length > 0
       ? currentPlanSelections
@@ -563,8 +581,13 @@ export async function POST(req: NextRequest) {
     const cleanText = signals.cleanText
 
     const directCommitIntent = isCartCommitIntent(latestUserText)
+    const inferredReplyItems = inferCartPlanFromAssistantText(cleanText, catalogProducts)
     const requestedCartItems = directCommitIntent
-      ? (signals.addItems.length > 0 ? signals.addItems : signals.planItems)
+      ? signals.addItems.length > 0
+        ? signals.addItems
+        : signals.planItems.length > 0
+          ? signals.planItems
+          : inferredReplyItems
       : []
 
     let validatedSelections = validateCartSelectionItems(requestedCartItems)
@@ -621,7 +644,9 @@ export async function POST(req: NextRequest) {
     const proposedItems = signals.planItems.length > 0
       ? signals.planItems
       : !directCommitIntent
-        ? signals.addItems
+        ? signals.addItems.length > 0
+          ? signals.addItems
+          : inferredReplyItems
         : []
     const proposedSelections = validateCartSelectionItems(proposedItems)
     const proposalAssessment = proposedSelections.length > 0
