@@ -54,6 +54,43 @@ function makeVisitorToken() {
   return id
 }
 
+function makeRequestId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return 'req_' + Date.now().toString(36) + '_' + makeId() + makeId()
+}
+
+const CART_ACTION_STORAGE_KEY = 'beewaz_processed_cart_actions'
+
+function getProcessedCartActionIds(): string[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = window.sessionStorage.getItem(CART_ACTION_STORAGE_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed)
+      ? parsed.filter((value): value is string => typeof value === 'string').slice(-30)
+      : []
+  } catch {
+    return []
+  }
+}
+
+function rememberProcessedCartActionId(actionId: string) {
+  if (typeof window === 'undefined') return
+  try {
+    const ids = getProcessedCartActionIds().filter((id) => id !== actionId)
+    ids.push(actionId)
+    window.sessionStorage.setItem(
+      CART_ACTION_STORAGE_KEY,
+      JSON.stringify(ids.slice(-30)),
+    )
+  } catch {
+    // Session storage is best-effort. The in-memory ref still prevents
+    // duplicate application during the active page session.
+  }
+}
+
 // ── Main Widget ────────────────────────────────────────────────────────────
 
 export function ChatWidget() {
@@ -78,11 +115,7 @@ export function ChatWidget() {
   const [isTyping, setIsTyping] = useState(false)
   const [leadSaved, setLeadSaved] = useState(false)
   const [hasNewMsg, setHasNewMsg] = useState(false)
-  const [pendingCartPlan, setPendingCartPlan] = useState<Array<{
-    sku: string
-    quantity: number
-  }>>([])
-  const addCartItem = useCart((state) => state.addItem)
+  const addCartItemQuantity = useCart((state) => state.addItemQuantity)
   const openCart = useCart((state) => state.openCart)
   const currentCartItems = useCart((state) => state.items)
 
@@ -93,9 +126,11 @@ export function ChatWidget() {
   const voiceSpeakRef = useRef<(text: string) => void>(() => {})
   const voiceCancelRef = useRef<() => void>(() => {})
   const voiceResumeRef = useRef<() => void>(() => {})
+  const processedCartActionsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     visitorToken.current = makeVisitorToken()
+    processedCartActionsRef.current = new Set(getProcessedCartActionIds())
     const stored = typeof window !== 'undefined' ? localStorage.getItem('beewaz_sid') : null
     if (stored) sessionId.current = stored
     fetch('/api/chat/config')
@@ -189,6 +224,7 @@ export function ChatWidget() {
     setBeeState('thinking')
 
     const newHistory: GeminiMessage[] = [...history, { role: 'user', text: text.trim() }]
+    const requestId = makeRequestId()
 
     try {
       const res = await fetch('/api/chat', {
@@ -198,12 +234,12 @@ export function ChatWidget() {
           messages: newHistory,
           session_id: sessionId.current,
           visitorToken: visitorToken.current,
+          request_id: requestId,
           cart: currentCartItems.map((item) => ({
             sku: item.sku,
             nameFa: item.nameFa,
             quantity: item.quantity,
           })),
-          cartPlan: pendingCartPlan,
         }),
       })
 
@@ -214,10 +250,7 @@ export function ChatWidget() {
         leadCaptured?: boolean
         phone?: string
         error?: string
-        cartPlan?: Array<{
-          sku: string
-          quantity: number
-        }>
+        cartActionId?: string
         cartItems?: Array<{
           id: string
           slug: string
@@ -263,18 +296,23 @@ export function ChatWidget() {
       if (!responseIsError) {
         setHistory([...newHistory, { role: 'model', text: replyText }])
 
-        if (data.cartPlan) {
-          setPendingCartPlan(data.cartPlan)
-        }
-
         if (data.cartItems && data.cartItems.length > 0) {
-          data.cartItems.forEach((item) => {
-            const quantity = Math.max(1, Math.min(20, item.quantity || 1))
-            const { quantity: _quantity, ...cartItem } = item
-            for (let index = 0; index < quantity; index += 1) {
-              addCartItem(cartItem)
+          const actionId = data.cartActionId
+          const alreadyProcessed = !!actionId && processedCartActionsRef.current.has(actionId)
+
+          if (!alreadyProcessed) {
+            data.cartItems.forEach((item) => {
+              const quantity = Math.max(1, Math.min(20, Math.floor(item.quantity || 1)))
+              const { quantity: _quantity, ...cartItem } = item
+              addCartItemQuantity(cartItem, quantity)
+            })
+
+            if (actionId) {
+              processedCartActionsRef.current.add(actionId)
+              rememberProcessedCartActionId(actionId)
             }
-          })
+          }
+
           openCart()
         }
       }
@@ -322,13 +360,12 @@ export function ChatWidget() {
       })
     }
   }, [
-    addCartItem,
+    addCartItemQuantity,
     currentCartItems,
     history,
     isTyping,
     leadSaved,
     openCart,
-    pendingCartPlan,
     pushBotMessage,
     setBeeState,
     setBeeTransientState,
