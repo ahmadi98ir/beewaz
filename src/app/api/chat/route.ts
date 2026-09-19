@@ -706,13 +706,81 @@ export async function POST(req: NextRequest) {
     // A validated persisted plan is the only source for terse approvals such as
     // «باشه» or «اوکی». The LLM is not called and cannot rewrite the package.
     if (plainPlanApproval) {
-      const reply = 'حتماً 👌 همون ترکیب تأییدشده رو دقیقاً به سبد خرید اضافه کردم.'
+      const cartDelta = packageCartDelta(currentPlanSelections)
+
+      if (cartDelta.conflictingPanelSku) {
+        const reply = `توی سبدت الان پنل ${cartDelta.conflictingPanelSku} هست، ولی این پکیج پنل دیگه‌ای داره. چون BEE چیزی رو خودکار از سبد حذف نمی‌کنه، اول پنل قبلی رو حذف کن؛ بعد همین پکیج رو دقیق اضافه می‌کنم.`
+        await db.insert(chatMessages).values({
+          sessionId,
+          role: 'assistant',
+          content: reply,
+          metadata: {
+            requestId,
+            cartPlan: currentPlanItems,
+            packageMode: latestSalesState?.packageMode,
+            packageNeeds: latestSalesState?.packageNeeds,
+          },
+        })
+        return NextResponse.json({
+          message: reply,
+          session_id: sessionId,
+          cartItems: [],
+          cartPlan: currentPlanItems,
+          leadCaptured: false,
+        })
+      }
+
+      if (cartDelta.overTargetSku) {
+        const reply = `توی سبدت از ${cartDelta.overTargetSku} بیشتر از تعداد این پکیج هست. برای اینکه تعدادها دقیق بمونه چیزی اضافه نکردم؛ اول تعداد اون قلم رو در سبد اصلاح کن.`
+        await db.insert(chatMessages).values({
+          sessionId,
+          role: 'assistant',
+          content: reply,
+          metadata: {
+            requestId,
+            cartPlan: currentPlanItems,
+            packageMode: latestSalesState?.packageMode,
+            packageNeeds: latestSalesState?.packageNeeds,
+          },
+        })
+        return NextResponse.json({
+          message: reply,
+          session_id: sessionId,
+          cartItems: [],
+          cartPlan: currentPlanItems,
+          leadCaptured: false,
+        })
+      }
+
+      if (cartDelta.delta.length === 0) {
+        const reply = 'همین پکیج با تعدادهای لازم از قبل توی سبدت هست 👌 چیزی دوباره اضافه نکردم.'
+        await db.insert(chatMessages).values({
+          sessionId,
+          role: 'assistant',
+          content: reply,
+          metadata: {
+            requestId,
+            cartPlan: [],
+            packageMode: latestSalesState?.packageMode,
+            packageNeeds: latestSalesState?.packageNeeds,
+          },
+        })
+        return NextResponse.json({
+          message: reply,
+          session_id: sessionId,
+          cartItems: [],
+          cartPlan: [],
+          leadCaptured: false,
+        })
+      }
+
+      const reply = 'حتماً 👌 اقلامِ باقی‌موندهٔ همون پکیج تأییدشده رو با تعداد دقیق به سبد خرید اضافه کردم.'
       const cartActionId = requestId ?? `cart-${sessionId}-${Date.now()}`
-      const cartActionItems = currentPlanSelections.map(({ product, quantity }) => ({
+      const cartActionItems = cartDelta.delta.map(({ product, quantity }) => ({
         sku: product.sku,
         quantity,
       }))
-      const cartItems = currentPlanSelections.map(({ product, quantity }) => ({
+      const cartItems = cartDelta.delta.map(({ product, quantity }) => ({
         id: product.id,
         slug: product.slug,
         categorySlug: product.categorySlug ?? 'products',
