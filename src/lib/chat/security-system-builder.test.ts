@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   assessSecurityCart,
   classifySecurityProduct,
+  getPanelWiredZoneCapacity,
   securityCartGuardMessage,
   shouldEnforceSystemCompleteness,
   wiredZoneCapacityGuardMessage,
@@ -72,6 +73,38 @@ describe('security system builder', () => {
     expect(shouldEnforceSystemCompleteness(
       'فقط پنل BH21 رو به سبد اضافه کن',
     )).toBe(false)
+  })
+
+  it('reads wired capacity from the production-shaped اتصالات spec value', () => {
+    expect(getPanelWiredZoneCapacity({
+      sku: 'BH21',
+      name: 'دستگاه دزدگیر BH21 بیواز',
+      category: 'پنل های مرکزی هشدار',
+      specs: [{
+        key: 'اتصالات',
+        value: '9 عدد زون سیمی / برد 4 رله / آنتن GSM / آنتن SUB GHz',
+      }],
+    })).toBe(9)
+
+    expect(getPanelWiredZoneCapacity({
+      sku: 'BH20',
+      name: 'دستگاه دزدگیر BH20 بیواز',
+      category: 'پنل های مرکزی هشدار',
+      specs: [{
+        key: 'اتصالات',
+        value: '5 عدد زون سیمی / برد 4 رله / آنتن GSM',
+      }],
+    })).toBe(5)
+  })
+
+  it('falls back to the product description when a wired-zone spec row is missing', () => {
+    expect(getPanelWiredZoneCapacity({
+      sku: 'BH21',
+      name: 'دستگاه دزدگیر BH21 بیواز',
+      category: 'پنل های مرکزی هشدار',
+      description: 'این دستگاه دارای 9 زون سیمی و 20 زون بی‌سیم است.',
+      specs: [],
+    })).toBe(9)
   })
 
   it('blocks a ready-to-install claim when wired detectors exceed registered wired zones', () => {
