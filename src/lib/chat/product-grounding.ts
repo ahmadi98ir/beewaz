@@ -236,6 +236,7 @@ export function isCartCommitIntent(text: string): boolean {
     || /(می\s*خوام\s*بخر|میخوام\s*بخر|بخرش|بخرمش|خریدش\s*کن|نهایی\s*کن)/i.test(normalized)
     || /^(?:آره\s*)?(?:اوکی|باشه|قبوله|موافقم|تایید|تأیید)(?:\s|$)/i.test(normalized)
     || /(همین(?:ه|\s+خوبه|\s+اوکیه)|اگر\s+خودت\s+میگی\s+خوبه)/i.test(normalized)
+    || /(?:همون|همان)[^\n]{0,48}(?:بذار|بزار|انتخاب\s*کن|بردار)/i.test(normalized)
   )
 }
 
