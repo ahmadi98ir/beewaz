@@ -152,7 +152,7 @@ export function extractCartDirective(text: string): CartDirective {
     .replace(/\s*\[BEE_CART_ADD:[^\]]+\]\s*/gi, '\n')
     // Occasionally the model explains the hidden action in Persian. Strip only
     // bracketed internal-action looking blocks; ordinary cart prose stays visible.
-    .replace(/\s*\[\s*(?:ربط|افزودن|اضافه)[^\]]{0,32}سبد\s*خرید\s*:[\s\S]*?\]\s*/gi, '\n')
+    .replace(/\s*\[\s*(?:ربط\s+به|افزودن\s+به|اضافه\s+به)\s+سبد\s*خرید\s*:[\s\S]*?\]\s*/gi, '\n')
     .trim()
 
   return {
