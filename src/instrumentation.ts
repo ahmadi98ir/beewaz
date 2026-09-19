@@ -297,7 +297,10 @@ export async function register() {
 
       await sql.end()
     } catch (err) {
-      console.error('[migration] ❌ Failed:', err)
+      // Fail closed: اگر migration یا safety-net DDL شکست بخورد، schema در
+      // وضعیت نامعلوم/ناقص است — سرور نباید روی آن ترافیک سرو کند.
+      console.error('[migration] ❌ Failed — refusing to serve traffic against a schema in an unknown state:', err)
+      process.exit(1)
     }
   }
 }
