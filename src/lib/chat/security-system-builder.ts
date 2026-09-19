@@ -127,15 +127,23 @@ export function securityCartGuardMessage(
 }
 
 
-export function shouldEnforceSystemCompleteness(conversationText: string): boolean {
-  const normalized = conversationText
+function normalizeConversationText(text: string): string {
+  return text
     .replace(/ي/g, 'ی')
     .replace(/ك/g, 'ک')
     .replace(/[\u200c\u200f\u202a-\u202e]/g, ' ')
     .toLocaleLowerCase('fa-IR')
+}
 
-  const explicitPanelOnly = /(فقط|تنها)[^\n]{0,24}(پنل|دستگاه|bh\s*[0-9۰-۹]+)/i.test(normalized)
-  if (explicitPanelOnly) return false
+export function isExplicitPanelOnlyRequest(text: string): boolean {
+  const normalized = normalizeConversationText(text)
+  return /(فقط|تنها)[^\n]{0,24}(پنل|دستگاه|bh\s*[0-9۰-۹]+)/i.test(normalized)
+}
+
+export function shouldEnforceSystemCompleteness(conversationText: string): boolean {
+  const normalized = normalizeConversationText(conversationText)
+
+  if (isExplicitPanelOnlyRequest(normalized)) return false
 
   return /(سیستم|پکیج|کامل|خونه|خانه|آپارتمان|ویلا|سنسور|حسگر|امنیت|حفاظت|راهنما|هیچی.*سر.*در|لازم|نیاز)/i.test(normalized)
 }
