@@ -153,6 +153,10 @@ function toAsciiDigits(text: string): string {
   }).join('')
 }
 
+function toPersianDigits(value: number): string {
+  return String(value).replace(/\d/g, (digit) => '۰۱۲۳۴۵۶۷۸۹'[Number(digit)]!)
+}
+
 export function isWiredSecurityProduct(product: SecurityCatalogProduct): boolean {
   const text = normalizedProductText(product)
   return /(سیمی|wired)/.test(text) && !/(بیسیم|wireless)/.test(text)
@@ -193,7 +197,7 @@ export function wiredZoneCapacityGuardMessage(
 
   if (wiredDetectorCount <= capacity) return null
 
-  return `ترکیب فعلی ${wiredDetectorCount} حسگر سیمی دارد، اما برای پنل ${panel.sku} فقط ${capacity} زون سیمی در مشخصات ثبت شده است. قبل از خرید باید یا طراحی/گروه‌بندی زون‌ها مشخص شود، یا بخشی از حسگرها بی‌سیم انتخاب شوند، یا پنلی با ظرفیت مستقل مناسب‌تر انتخاب شود؛ بنابراین این ترکیب را به‌عنوان سیستم آماده نصب به سبد اضافه نمی‌کنم.`
+  return `ترکیب فعلی ${toPersianDigits(wiredDetectorCount)} حسگر سیمی دارد، اما برای پنل ${panel.sku} فقط ${toPersianDigits(capacity)} زون سیمی در مشخصات ثبت شده است. قبل از خرید باید یا طراحی/گروه‌بندی زون‌ها مشخص شود، یا بخشی از حسگرها بی‌سیم انتخاب شوند، یا پنلی با ظرفیت مستقل مناسب‌تر انتخاب شود؛ بنابراین این ترکیب را به‌عنوان سیستم آماده نصب به سبد اضافه نمی‌کنم.`
 }
 
 
