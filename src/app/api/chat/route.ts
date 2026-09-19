@@ -627,6 +627,13 @@ export async function POST(req: NextRequest) {
       && !hasCartPlanModificationIntent(latestUserText)
     )
 
+    const approvalAgainstStalePlan = (
+      currentPlanItems.length > 0
+      && !currentPlanReady
+      && isCartCommitIntent(latestUserText)
+      && !hasCartPlanModificationIntent(latestUserText)
+    )
+
     // A validated persisted plan is the only source for terse approvals such as
     // «باشه» or «اوکی». The LLM is not called and cannot rewrite the package.
     if (plainPlanApproval) {
@@ -699,16 +706,20 @@ export async function POST(req: NextRequest) {
     }
 
     const packageFlowActive = (
-      isSecurityPackageConversation(userTexts)
+      (
+        latestSalesState?.packageMode === 'security_system'
+        || isSecurityPackageConversation(userTexts)
+      )
       && (
         isPackageRecommendationIntent(latestUserText)
         || isPackageRequirementsUpdate(latestUserText)
         || isExplicitCartPurchaseIntent(latestUserText)
         || pendingAnswer.handled
         || (
-          pendingPackageQuestion === 'motion_areas'
+          !!pendingPackageQuestion
           && isUnknownPackageAnswer(latestUserText)
         )
+        || approvalAgainstStalePlan
       )
     )
 
@@ -891,14 +902,17 @@ export async function POST(req: NextRequest) {
           ? [`کنترل ظرفیت: ${capacityNotes.join(' و ')}.`]
           : []),
         `جمع فعلی: حدود ${totalToman} تومان.`,
-        assumedMotionCoverage
-          ? 'این یک پکیج پایه است؛ اگر فضای اصلی بیشتری داری تعداد چشمی‌ها رو قبل از خرید اصلاح می‌کنیم.'
-          : 'اگر اوکیه بگو «بذار تو سبد»؛ همین ترکیب دقیق رو اضافه می‌کنم.',
+        approvalAgainstStalePlan
+          ? 'ترکیب قبلی با موجودی فعلی قابل ثبت نبود؛ این نسخه به‌روز شده‌ست. اگر تأییدش می‌کنی دوباره بگو «بذار تو سبد».'
+          : assumedMotionCoverage
+            ? 'این یک پکیج پایه است؛ اگر فضای اصلی بیشتری داری تعداد چشمی‌ها رو قبل از خرید اصلاح می‌کنیم.'
+            : 'اگر اوکیه بگو «بذار تو سبد»؛ همین ترکیب دقیق رو اضافه می‌کنم.',
       ].join('\n')
 
       const wantsImmediatePurchase = (
         isExplicitCartPurchaseIntent(latestUserText)
         && !assumedMotionCoverage
+        && !approvalAgainstStalePlan
       )
       const cartActionId = wantsImmediatePurchase
         ? requestId ?? `cart-${sessionId}-${Date.now()}`
