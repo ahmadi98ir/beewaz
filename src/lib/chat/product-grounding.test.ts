@@ -5,6 +5,7 @@ import {
   extractCartDirective,
   extractCartSignals,
   hasCartPlanModificationIntent,
+  inferCartPlanFromAssistantText,
   isCartCommitIntent,
   findMentionedProducts,
   findLatestSingleMentionedProduct,
@@ -16,6 +17,8 @@ import {
 const PRODUCTS: GroundedProduct[] = [
   { sku: 'BH20', name: 'دستگاه دزدگیر BH20 بیواز', stock: 4, status: 'active' },
   { sku: 'BH21', name: 'دستگاه دزدگیر BH21 بیواز', stock: 2, status: 'active' },
+  { sku: 'MG10', name: 'مگنت سیمی بیواز MG10', stock: 50, status: 'active' },
+  { sku: 'P100', name: 'چشمی حرکتی بیواز P100', stock: 20, status: 'active' },
 ]
 
 describe('product grounding helpers', () => {
@@ -133,6 +136,37 @@ describe('product grounding helpers', () => {
   })
 
 
+  it('parses and strips a provider-wrapped BEE_CART_ADD marker', () => {
+    const parsed = extractCartDirective(
+      'حالا ترکیب رو اضافه می‌کنم. [وارد سبد خرید می‌کنم: BEE_CART_ADD:BH-21*1,MG10*8,P100*1]',
+    )
+    expect(parsed.cleanText).toBe('حالا ترکیب رو اضافه می‌کنم.')
+    expect(parsed.items).toEqual([
+      { sku: 'BH21', quantity: 1 },
+      { sku: 'MG10', quantity: 8 },
+      { sku: 'P100', quantity: 1 },
+    ])
+  })
+
+  it('recovers the exact package from a visible assistant recommendation', () => {
+    const inferred = inferCartPlanFromAssistantText(
+      [
+        'ترکیب نهایی برای خرید:',
+        '1. پنل دزدگیر BH21: ۲۰٬۹۰۰٬۰۰۰ تومان',
+        '2. مگنت سیمی: ۸ عدد (۲۹۰٬۰۰۰ تومان برای هر کدوم)',
+        '3. چشمی حرکتی P100: ۱ عدد',
+      ].join('\n'),
+      PRODUCTS,
+    )
+
+    expect(inferred).toEqual([
+      { sku: 'BH21', quantity: 1 },
+      { sku: 'MG10', quantity: 8 },
+      { sku: 'P100', quantity: 1 },
+    ])
+  })
+
+
   it('keeps a proposed package separate from cart execution', () => {
     const parsed = extractCartSignals(
       'این ترکیب پیشنهادی منه. [BEE_CART_PLAN:BH21*1,MG10*8,P100*2]',
@@ -152,6 +186,7 @@ describe('product grounding helpers', () => {
     expect(isCartCommitIntent('آره موافقم می‌خوام بخرمش')).toBe(true)
     expect(isCartCommitIntent('اوکی سبد نهایی کن')).toBe(true)
     expect(isCartCommitIntent('پنلم همون چیزی که فکر می‌کنی خوبه رو بذار')).toBe(true)
+    expect(isCartCommitIntent('باشه خوبه همینو برام بذار می‌برم')).toBe(true)
     expect(isCartCommitIntent('قیمت این پکیج چنده؟')).toBe(false)
   })
 
