@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildStructuredSpecComparison,
+  canonicalizeSku,
   extractCartDirective,
   findMentionedProducts,
   findLatestSingleMentionedProduct,
@@ -107,6 +108,24 @@ describe('product grounding helpers', () => {
       { sku: 'BH21', quantity: 1 },
       { sku: 'P100', quantity: 3 },
       { sku: 'MG10', quantity: 3 },
+    ])
+  })
+
+
+  it('canonicalizes cosmetic SKU punctuation', () => {
+    expect(canonicalizeSku('BH-21')).toBe('BH21')
+    expect(canonicalizeSku(' bh 21 ')).toBe('BH21')
+  })
+
+  it('parses the Persian cart annotation seen in production', () => {
+    const parsed = extractCartDirective(
+      'حالا این ترکیب را به سبد خرید اضافه می‌کنم. [به سبد اضافه می‌شود: BH-21*1,MG10*8,P100*1]',
+    )
+    expect(parsed.cleanText).toBe('حالا این ترکیب را به سبد خرید اضافه می‌کنم.')
+    expect(parsed.items).toEqual([
+      { sku: 'BH21', quantity: 1 },
+      { sku: 'MG10', quantity: 8 },
+      { sku: 'P100', quantity: 1 },
     ])
   })
 
