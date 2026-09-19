@@ -511,36 +511,44 @@ export async function POST(req: NextRequest) {
 
     const validateCartSelectionItems = (
       items: readonly { sku: string; quantity: number }[],
-    ): ValidatedSelection[] => items
-      .map(({ sku, quantity }) => {
+    ): ValidatedSelection[] => {
+      if (items.length === 0) return []
+
+      const selections: ValidatedSelection[] = []
+      const seen = new Set<string>()
+
+      for (const item of items) {
+        const sku = canonicalizeSku(item.sku)
+        const quantity = Number(item.quantity)
+
+        // Never silently clamp a proposed quantity. A package is either still
+        // exactly purchasable or it must be rebuilt against current stock.
+        if (
+          !sku
+          || seen.has(sku)
+          || !Number.isInteger(quantity)
+          || quantity < 1
+          || quantity > 20
+        ) {
+          return []
+        }
+
         const product = catalogProducts.find(
-          (candidate) => canonicalizeSku(candidate.sku) === canonicalizeSku(sku),
+          (candidate) => canonicalizeSku(candidate.sku) === sku,
         )
-        if (!product || product.status !== 'active' || product.stock <= 0) return null
-        return {
-          product,
-          quantity: Math.min(Math.max(1, quantity), product.stock, 20),
+        if (
+          !product
+          || product.status !== 'active'
+          || product.stock < quantity
+        ) {
+          return []
         }
-      })
-      .filter((selection): selection is ValidatedSelection => !!selection)
 
-    const mergeCartSelectionItems = (
-      ...groups: ReadonlyArray<readonly { sku: string; quantity: number }[]>
-    ): Array<{ sku: string; quantity: number }> => {
-      const merged = new Map<string, { sku: string; quantity: number }>()
-
-      for (const group of groups) {
-        for (const item of group) {
-          const key = canonicalizeSku(item.sku)
-          if (!key || merged.has(key)) continue
-          merged.set(key, {
-            sku: item.sku,
-            quantity: Math.min(20, Math.max(1, item.quantity || 1)),
-          })
-        }
+        seen.add(sku)
+        selections.push({ product, quantity })
       }
 
-      return Array.from(merged.values())
+      return selections
     }
 
     const assessValidatedSelections = async (selections: ValidatedSelection[]) => {
@@ -587,28 +595,24 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const suppliedPlanItems = Array.isArray(body.cartPlan)
+    const legacyPlanItems = Array.isArray(body.cartPlan)
       ? body.cartPlan.slice(0, 50)
       : []
-
-    const recoveredPlanItems = suppliedPlanItems.length > 0
-      ? []
-      : body.messages
-          .filter((message) => message.role === 'model')
-          .slice(-4)
-          .reverse()
-          .map((message) => inferCartPlanFromAssistantText(message.text, catalogProducts))
-          .find((items) => items.length > 0) ?? []
-
-    const currentPlanItems = suppliedPlanItems.length > 0
-      ? suppliedPlanItems
-      : recoveredPlanItems
+    const currentPlanItems = latestSalesState?.cartPlan?.length
+      ? latestSalesState.cartPlan.slice(0, 50)
+      : latestSalesState
+        ? []
+        : legacyPlanItems
 
     const currentPlanSelections = validateCartSelectionItems(currentPlanItems)
     const currentPlanAssessment = currentPlanSelections.length > 0
       ? await assessValidatedSelections(currentPlanSelections)
       : { guard: null as string | null, capacityGuard: null as string | null }
-    const currentPlanReady = currentPlanSelections.length > 0 && !currentPlanAssessment.guard
+    const currentPlanReady = (
+      currentPlanSelections.length === currentPlanItems.length
+      && currentPlanSelections.length > 0
+      && !currentPlanAssessment.guard
+    )
 
     const cartPlanContext = currentPlanReady
       ? currentPlanSelections
@@ -622,35 +626,47 @@ export async function POST(req: NextRequest) {
       && !hasCartPlanModificationIntent(latestUserText)
     )
 
-    // Deterministic commit path: once BEE has already proposed a validated
-    // package, a terse approval never goes back through the LLM. This prevents
-    // the model from dropping the panel or entering a completeness-guard loop.
+    // A validated persisted plan is the only source for terse approvals such as
+    // «باشه» or «اوکی». The LLM is not called and cannot rewrite the package.
     if (plainPlanApproval) {
-      const reply = 'حتماً 👌 همون پکیجی که با هم جمع‌بندی کردیم رو برات به سبد خرید اضافه کردم. سبد رو باز می‌کنم که تعدادها رو یک نگاه بندازی؛ اگر خواستی چیزی کم‌وزیاد کنیم، من هستم.'
-
+      const reply = 'حتماً 👌 همون ترکیب تأییدشده رو دقیقاً به سبد خرید اضافه کردم.'
+      const cartActionId = requestId ?? `cart-${sessionId}-${Date.now()}`
+      const cartActionItems = currentPlanSelections.map(({ product, quantity }) => ({
+        sku: product.sku,
+        quantity,
+      }))
       const cartItems = currentPlanSelections.map(({ product, quantity }) => ({
-            id: product.id,
-            slug: product.slug,
-            categorySlug: product.categorySlug ?? 'products',
-            nameFa: product.name,
-            sku: product.sku,
-            price: product.price,
-            comparePrice: product.comparePrice ?? undefined,
-            quantity,
-            placeholderFrom: '#DBEAFE',
-            placeholderTo: '#BFDBFE',
-          }))
+        id: product.id,
+        slug: product.slug,
+        categorySlug: product.categorySlug ?? 'products',
+        nameFa: product.name,
+        sku: product.sku,
+        price: product.price,
+        comparePrice: product.comparePrice ?? undefined,
+        quantity,
+        placeholderFrom: '#DBEAFE',
+        placeholderTo: '#BFDBFE',
+      }))
 
       await db.insert(chatMessages).values({
         sessionId,
         role: 'assistant',
         content: reply,
+        metadata: {
+          requestId,
+          cartActionId,
+          cartActionItems,
+          cartPlan: [],
+          packageMode: latestSalesState?.packageMode,
+          packageNeeds: latestSalesState?.packageNeeds,
+        },
       })
 
       return NextResponse.json({
         message: reply,
         session_id: sessionId,
         cartItems,
+        cartActionId,
         cartPlan: [],
         leadCaptured: false,
       })
