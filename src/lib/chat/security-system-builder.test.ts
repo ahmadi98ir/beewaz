@@ -4,6 +4,7 @@ import {
   classifySecurityProduct,
   securityCartGuardMessage,
   shouldEnforceSystemCompleteness,
+  wiredZoneCapacityGuardMessage,
 } from './security-system-builder'
 
 describe('security system builder', () => {
@@ -71,5 +72,58 @@ describe('security system builder', () => {
     expect(shouldEnforceSystemCompleteness(
       'فقط پنل BH21 رو به سبد اضافه کن',
     )).toBe(false)
+  })
+
+  it('blocks a ready-to-install claim when wired detectors exceed registered wired zones', () => {
+    const message = wiredZoneCapacityGuardMessage([
+      {
+        sku: 'BH20',
+        name: 'دستگاه دزدگیر BH20 بیواز',
+        category: 'پنل های مرکزی هشدار',
+        quantity: 1,
+        specs: [{ key: 'زون‌های سیمی', value: '۵ زون' }],
+      },
+      {
+        sku: 'MG10',
+        name: 'مگنت سیمی بیواز MG10',
+        category: 'سنسورهای محیطی',
+        description: 'حسگر مجاورت سیمی',
+        quantity: 7,
+      },
+      {
+        sku: 'P100',
+        name: 'چشمی حرکتی بیواز P100',
+        category: 'سنسورهای تشخیص حرکت',
+        description: 'حسگر حرکتی PIR سیمی',
+        quantity: 2,
+      },
+    ])
+
+    expect(message).toContain('۹ حسگر سیمی')
+    expect(message).toContain('۵ زون سیمی')
+  })
+
+  it('allows an independently zoned layout that fits panel wired capacity', () => {
+    expect(wiredZoneCapacityGuardMessage([
+      {
+        sku: 'BH21',
+        name: 'دستگاه دزدگیر BH21 بیواز',
+        category: 'پنل های مرکزی هشدار',
+        quantity: 1,
+        specs: [{ key: 'زون‌های سیمی', value: '۹ زون' }],
+      },
+      {
+        sku: 'MG10',
+        name: 'مگنت سیمی بیواز MG10',
+        description: 'مگنت سیمی',
+        quantity: 7,
+      },
+      {
+        sku: 'P100',
+        name: 'چشمی حرکتی بیواز P100',
+        description: 'چشمی حرکتی سیمی',
+        quantity: 2,
+      },
+    ])).toBeNull()
   })
 })
