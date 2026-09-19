@@ -216,6 +216,300 @@ export function isUnknownPackageAnswer(text: string): boolean {
   return /^(?:نمی\s*دونم|نمیدونم|نمی\s*دونم\s*خودت|هرچی\s*تو\s*بگی|خودت\s*بگو|خودت\s*انتخاب\s*کن)[.!؟?\s]*$/i.test(normalized)
 }
 
+
+export function applyPackageQuestionAnswer(
+  current: SecurityNeeds,
+  questionKey: PackageQuestionKey | null | undefined,
+  text: string,
+): { needs: SecurityNeeds; handled: boolean } {
+  if (!questionKey) return { needs: current, handled: false }
+
+  const normalized = normalizeText(text)
+  const exact = normalized.match(
+    new RegExp('^\\s*' + numberTokenPattern() + '\\s*(?:تا|عدد)?\\s*[.!؟?]*\\s*
+function activeProducts(
+  products: readonly DeterministicPackageProduct[],
+): DeterministicPackageProduct[] {
+  return products.filter((product) => product.status === 'active' && product.stock > 0)
+}
+
+function preferredProduct(
+  products: readonly DeterministicPackageProduct[],
+  preferredSku: string,
+): DeterministicPackageProduct | null {
+  const preferred = products.find(
+    (product) => canonicalizeSku(product.sku) === canonicalizeSku(preferredSku),
+  )
+  if (preferred) return preferred
+  return products.slice().sort((a, b) => a.price - b.price)[0] ?? null
+}
+
+function haveCommonWirelessFrequency(
+  panel: DeterministicPackageProduct,
+  detector: DeterministicPackageProduct,
+): boolean {
+  const panelFreqs = getWirelessFrequenciesMHz(panel)
+  const detectorFreqs = getWirelessFrequenciesMHz(detector)
+  if (panelFreqs.length === 0 || detectorFreqs.length === 0) return false
+
+  return panelFreqs.some((panelFrequency) => (
+    detectorFreqs.some((detectorFrequency) => Math.abs(panelFrequency - detectorFrequency) < 0.01)
+  ))
+}
+
+function readyPlan(
+  needs: SecurityNeeds,
+  design: 'wired_independent' | 'wireless' | 'hybrid',
+  items: DeterministicPackageItem[],
+  wiredDetectorCount: number,
+  wirelessDetectorCount: number,
+  panelWiredCapacity: number | null,
+  panelWirelessCapacity: number | null,
+): DeterministicPackagePlan {
+  const positiveItems = items.filter((item) => item.quantity > 0)
+  return {
+    status: 'ready',
+    needs,
+    design,
+    items: positiveItems,
+    wiredDetectorCount,
+    wirelessDetectorCount,
+    panelWiredCapacity,
+    panelWirelessCapacity,
+    totalPrice: positiveItems.reduce(
+      (sum, item) => sum + item.product.price * item.quantity,
+      0,
+    ),
+  }
+}
+
+export function buildDeterministicSecurityPackage(
+  products: readonly DeterministicPackageProduct[],
+  needs: SecurityNeeds,
+): DeterministicPackagePlan {
+  if (needs.doors === null && needs.windows === null) {
+    return {
+      status: 'needs_input',
+      needs,
+      questionKey: 'openings',
+      question: 'فقط تعداد درهای ورودی و پنجره‌های قابل‌دسترسی رو بگو؛ بقیه انتخاب‌ها با من.',
+    }
+  }
+
+  if (needs.doors === null) {
+    return {
+      status: 'needs_input',
+      needs,
+      questionKey: 'doors',
+      question: 'فقط بگو چند تا در ورودی داری؛ بقیه‌ش با من.',
+    }
+  }
+
+  if (needs.windows === null) {
+    return {
+      status: 'needs_input',
+      needs,
+      questionKey: 'windows',
+      question: 'فقط بگو چند تا پنجره قابل‌دسترسی داری؛ بقیه‌ش با من.',
+    }
+  }
+
+  const available = activeProducts(products)
+  const openingCount = Math.max(0, needs.doors + needs.windows)
+
+  // A "complete" indoor design cannot infer motion coverage from square meters
+  // alone. Ask one concrete question rather than silently inventing a PIR count.
+  if (needs.motionAreas === null && needs.wiringPreference !== 'wireless') {
+    return {
+      status: 'needs_input',
+      needs,
+      questionKey: 'motion_areas',
+      question: 'فقط برای چشمی‌ها بگو چند فضای اصلی مثل پذیرایی، راهرو یا طبقه رو می‌خوای پوشش بدی؟ یک عدد کافیه.',
+    }
+  }
+
+  if (openingCount === 0 && (needs.motionAreas ?? 0) === 0) {
+    return {
+      status: 'unsupported',
+      needs,
+      message: 'با صفر نقطه بازشو و صفر فضای حرکتی، حسگر تشخیص نفوذی برای پکیج باقی نمی‌مونه. حداقل یک نقطه حفاظتی باید مشخص بشه.',
+    }
+  }
+
+  if (needs.wiringPreference === 'wireless') {
+    const wirelessOpenings = openingCount > 0
+      ? available.filter((product) => (
+          classifySecurityProduct(product) === 'opening_sensor'
+          && isWirelessSecurityProduct(product)
+          && product.stock >= openingCount
+        ))
+      : []
+    const wirelessMotions = available.filter((product) => (
+      classifySecurityProduct(product) === 'motion_sensor'
+      && isWirelessSecurityProduct(product)
+      && product.stock >= Math.max(1, needs.motionAreas ?? 1)
+    ))
+
+    const openingSensor = openingCount > 0
+      ? preferredProduct(wirelessOpenings, 'MG11')
+      : null
+    const motionSensor = preferredProduct(wirelessMotions, '')
+
+    if (!motionSensor) {
+      const openingFact = openingSensor
+        ? `برای در و پنجره‌ها ${openingSensor.sku} بی‌سیم موجوده، `
+        : ''
+      return {
+        status: 'unsupported',
+        needs,
+        message: `${openingFact}اما در کاتالوگ فعلی چشمی حرکتی بی‌سیمِ موجود و قابل‌تأیید پیدا نکردم. پکیج «کاملاً بی‌سیم» رو حدسی نمی‌بندم؛ اگر بخوای نسخه ترکیبی می‌چینم: مگنت‌های بی‌سیم + چشمی سیمی.`,
+      }
+    }
+
+    const motionCount = Math.max(1, needs.motionAreas ?? 1)
+    const detectorCount = openingCount + motionCount
+    const panelCandidates = available
+      .filter((product) => classifySecurityProduct(product) === 'panel')
+      .map((product) => ({
+        product,
+        capacity: getPanelWirelessZoneCapacity(product),
+      }))
+      .filter(
+        (candidate): candidate is { product: DeterministicPackageProduct; capacity: number } => (
+          candidate.capacity !== null
+          && candidate.capacity >= detectorCount
+          && (!openingSensor || haveCommonWirelessFrequency(candidate.product, openingSensor))
+          && haveCommonWirelessFrequency(candidate.product, motionSensor)
+        ),
+      )
+      .sort((a, b) => a.product.price - b.product.price || a.capacity - b.capacity)
+
+    const selectedPanel = panelCandidates[0]
+    if (!selectedPanel) {
+      return {
+        status: 'unsupported',
+        needs,
+        message: 'برای یک پکیج کاملاً بی‌سیم، پنل و حسگرهایی با ظرفیت و فرکانس سازگارِ ثبت‌شده پیدا نکردم؛ چیزی رو حدسی وارد سبد نمی‌کنم.',
+      }
+    }
+
+    return readyPlan(
+      needs,
+      'wireless',
+      [
+        { product: selectedPanel.product, quantity: 1 },
+        ...(openingSensor ? [{ product: openingSensor, quantity: openingCount }] : []),
+        { product: motionSensor, quantity: motionCount },
+      ],
+      0,
+      detectorCount,
+      getPanelWiredZoneCapacity(selectedPanel.product),
+      selectedPanel.capacity,
+    )
+  }
+
+  const motionCount = Math.max(0, needs.motionAreas ?? 0)
+  const useHybrid = needs.wiringPreference === 'hybrid'
+
+  const openingCandidates = openingCount > 0
+    ? available.filter((product) => (
+        classifySecurityProduct(product) === 'opening_sensor'
+        && (useHybrid ? isWirelessSecurityProduct(product) : isWiredSecurityProduct(product))
+        && product.stock >= openingCount
+      ))
+    : []
+
+  const motionCandidates = motionCount > 0
+    ? available.filter((product) => (
+        classifySecurityProduct(product) === 'motion_sensor'
+        && isWiredSecurityProduct(product)
+        && product.stock >= motionCount
+      ))
+    : []
+
+  const openingSensor = openingCount > 0
+    ? preferredProduct(openingCandidates, useHybrid ? 'MG11' : 'MG10')
+    : null
+  const motionSensor = motionCount > 0
+    ? preferredProduct(motionCandidates, 'P100')
+    : null
+
+  if ((openingCount > 0 && !openingSensor) || (motionCount > 0 && !motionSensor)) {
+    return {
+      status: 'unsupported',
+      needs,
+      message: 'برای این طراحی، حسگر مناسب با موجودی و نوع اتصال لازم در کاتالوگ فعلی پیدا نکردم؛ جایگزین حدسی وارد سبد نمی‌کنم.',
+    }
+  }
+
+  const wiredDetectorCount = motionCount + (useHybrid ? 0 : openingCount)
+  const wirelessDetectorCount = useHybrid ? openingCount : 0
+
+  const panelCandidates = available
+    .filter((product) => classifySecurityProduct(product) === 'panel')
+    .map((product) => ({
+      product,
+      wiredCapacity: getPanelWiredZoneCapacity(product),
+      wirelessCapacity: getPanelWirelessZoneCapacity(product),
+    }))
+    .filter((candidate) => {
+      if (wiredDetectorCount > 0) {
+        if (candidate.wiredCapacity === null || candidate.wiredCapacity < wiredDetectorCount) return false
+      }
+      if (wirelessDetectorCount > 0) {
+        if (candidate.wirelessCapacity === null || candidate.wirelessCapacity < wirelessDetectorCount) return false
+        if (openingSensor && !haveCommonWirelessFrequency(candidate.product, openingSensor)) return false
+      }
+      return true
+    })
+    .sort((a, b) => (
+      a.product.price - b.product.price
+      || (a.wiredCapacity ?? Number.MAX_SAFE_INTEGER) - (b.wiredCapacity ?? Number.MAX_SAFE_INTEGER)
+    ))
+
+  const selectedPanel = panelCandidates[0]
+  if (!selectedPanel) {
+    const designLabel = useHybrid ? 'ترکیبی' : 'سیمی با زون‌های مستقل'
+    return {
+      status: 'unsupported',
+      needs,
+      message: `برای طراحی ${designLabel} با این تعداد نقطه، پنل موجودی با ظرفیت ثبت‌شده کافی پیدا نکردم. چیزی رو حدسی وارد سبد نمی‌کنم؛ باید روش زون‌بندی یا نوع اتصال عوض بشه.`,
+    }
+  }
+
+  return readyPlan(
+    needs,
+    useHybrid ? 'hybrid' : 'wired_independent',
+    [
+      { product: selectedPanel.product, quantity: 1 },
+      ...(openingSensor ? [{ product: openingSensor, quantity: openingCount }] : []),
+      ...(motionSensor ? [{ product: motionSensor, quantity: motionCount }] : []),
+    ],
+    wiredDetectorCount,
+    wirelessDetectorCount,
+    selectedPanel.wiredCapacity,
+    selectedPanel.wirelessCapacity,
+  )
+}
+, 'i'),
+  )
+  const count = parseCountToken(exact?.[1])
+  if (count === null) return { needs: current, handled: false }
+
+  if (questionKey === 'doors') {
+    return { needs: { ...current, doors: count }, handled: true }
+  }
+  if (questionKey === 'windows') {
+    return { needs: { ...current, windows: count }, handled: true }
+  }
+  if (questionKey === 'motion_areas') {
+    return { needs: { ...current, motionAreas: count }, handled: true }
+  }
+
+  // A single number cannot safely be split into separate door/window counts.
+  return { needs: current, handled: false }
+}
+
 function activeProducts(
   products: readonly DeterministicPackageProduct[],
 ): DeterministicPackageProduct[] {
