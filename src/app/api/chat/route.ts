@@ -673,8 +673,7 @@ export async function POST(req: NextRequest) {
     })
 
     // ── 5. Detect lead (phone number) ─────────────────────────────────────────
-    const lastUserText = lastUserMsg?.text ?? ''
-    const phoneMatch = lastUserText.match(/(\+98|0)?9\d{9}/)
+    const phoneMatch = latestUserText.match(/(\+98|0)?9\d{9}/)
     const leadCaptured = !!phoneMatch && reply.includes('✅')
 
     return NextResponse.json({
