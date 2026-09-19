@@ -247,6 +247,6 @@ export function hasCartPlanModificationIntent(text: string): boolean {
     .replace(/[\u200c\u200f\u202a-\u202e]/g, ' ')
     .toLocaleLowerCase('fa-IR')
 
-  return /(حذف|کمتر|بیشتر|یکی\s+دیگه|یک\s+دونه\s+دیگه|عوض|تغییر|بدون|به\s*جاش|جایگزین)/i.test(normalized)
+  return /(حذف|کمتر|بیشتر|یکی\s+دیگه|یک\s+دونه\s+دیگه|یه[^\n]{0,24}دیگه|عوض|تغییر|بدون|به\s*جاش|جایگزین)/i.test(normalized)
 }
 
