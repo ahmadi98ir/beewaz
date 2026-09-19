@@ -10,7 +10,6 @@ import {
   extractCartSignals,
   findLatestSingleMentionedProduct,
   hasCartPlanModificationIntent,
-  inferCartPlanFromAssistantText,
   isCartCommitIntent,
   isExplicitCartPurchaseIntent,
   findMentionedProducts,
@@ -32,6 +31,7 @@ import {
   isPackageRecommendationIntent,
   isPackageRequirementsUpdate,
   isSecurityPackageConversation,
+  isUnknownPackageAnswer,
   type DeterministicPackageProduct,
 } from '@/lib/chat/security-package-planner'
 
