@@ -292,12 +292,23 @@ export function getWirelessFrequenciesMHz(
     .replace(/ي/g, 'ی')
     .replace(/ك/g, 'ک')
 
-  const frequencies = Array.from(
-    normalized.matchAll(/(\d{3,4}(?:\.\d+)?)\s*(?:mhz|مگاهرتز)/gi),
-    (match) => Number.parseFloat(match[1]!),
-  ).filter((value) => Number.isFinite(value) && value >= 100 && value <= 1000)
+  const frequencies: number[] = []
 
-  return Array.from(new Set(frequencies))
+  for (const match of normalized.matchAll(
+    /(\d{3,4}(?:\.\d+)?)\s*[\/،,]\s*(\d{3,4}(?:\.\d+)?)\s*(?:mhz|مگاهرتز)/gi,
+  )) {
+    frequencies.push(Number.parseFloat(match[1]!), Number.parseFloat(match[2]!))
+  }
+
+  for (const match of normalized.matchAll(
+    /(\d{3,4}(?:\.\d+)?)\s*(?:mhz|مگاهرتز)/gi,
+  )) {
+    frequencies.push(Number.parseFloat(match[1]!))
+  }
+
+  return Array.from(new Set(
+    frequencies.filter((value) => Number.isFinite(value) && value >= 100 && value <= 1000),
+  ))
 }
 
 /**
