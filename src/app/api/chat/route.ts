@@ -26,6 +26,7 @@ import {
   wiredZoneCapacityGuardMessage,
 } from '@/lib/chat/security-system-builder'
 import {
+  applyPackageQuestionAnswer,
   buildDeterministicSecurityPackage,
   extractSecurityNeeds,
   isPackageRecommendationIntent,
@@ -674,16 +675,40 @@ export async function POST(req: NextRequest) {
 
 
     // ── Deterministic package engine ─────────────────────────────────────────
-    // For whole-system shopping, BEE no longer asks the LLM to invent a cart
-    // plan. Requirements are extracted from the customer's own messages, then
-    // a package is built from live catalog/stock/spec data.
+    const pendingPackageQuestion = latestSalesState?.packageQuestionKey ?? null
+    const previousPackageNeeds = latestSalesState?.packageNeeds ?? null
+
+    let packageNeeds = extractSecurityNeeds(userTexts, previousPackageNeeds)
+    const pendingAnswer = applyPackageQuestionAnswer(
+      packageNeeds,
+      pendingPackageQuestion,
+      latestUserText,
+    )
+    if (pendingAnswer.handled) packageNeeds = pendingAnswer.needs
+
+    let assumedMotionCoverage = false
+    if (
+      pendingPackageQuestion === 'motion_areas'
+      && isUnknownPackageAnswer(latestUserText)
+    ) {
+      // The customer explicitly delegated the choice to BEE. We may offer a
+      // clearly-labelled base package, but must not call the assumed coverage
+      // a complete site design.
+      packageNeeds = { ...packageNeeds, motionAreas: 1 }
+      assumedMotionCoverage = true
+    }
+
     const packageFlowActive = (
       isSecurityPackageConversation(userTexts)
       && (
         isPackageRecommendationIntent(latestUserText)
         || isPackageRequirementsUpdate(latestUserText)
         || isExplicitCartPurchaseIntent(latestUserText)
-        || currentPlanReady
+        || pendingAnswer.handled
+        || (
+          pendingPackageQuestion === 'motion_areas'
+          && isUnknownPackageAnswer(latestUserText)
+        )
       )
     )
 
@@ -719,14 +744,23 @@ export async function POST(req: NextRequest) {
           .map((spec) => ({ key: spec.key, value: spec.value })),
       }))
 
-      const needs = extractSecurityNeeds(userTexts)
-      const packagePlan = buildDeterministicSecurityPackage(plannerProducts, needs)
+      const packagePlan = buildDeterministicSecurityPackage(
+        plannerProducts,
+        packageNeeds,
+      )
 
       if (packagePlan.status === 'needs_input') {
         await db.insert(chatMessages).values({
           sessionId,
           role: 'assistant',
           content: packagePlan.question,
+          metadata: {
+            requestId,
+            packageMode: 'security_system',
+            packageQuestionKey: packagePlan.questionKey,
+            packageNeeds: packagePlan.needs,
+            cartPlan: [],
+          },
         })
 
         return NextResponse.json({
@@ -743,6 +777,12 @@ export async function POST(req: NextRequest) {
           sessionId,
           role: 'assistant',
           content: packagePlan.message,
+          metadata: {
+            requestId,
+            packageMode: 'security_system',
+            packageNeeds: packagePlan.needs,
+            cartPlan: [],
+          },
         })
 
         return NextResponse.json({
@@ -754,25 +794,30 @@ export async function POST(req: NextRequest) {
         })
       }
 
-      const deterministicSelections = packagePlan.items
-        .map((item) => ({
-          product: catalogProducts.find((product) => product.id === item.product.id),
-          quantity: item.quantity,
-        }))
-        .filter(
-          (selection): selection is ValidatedSelection => !!selection.product,
-        )
+      const deterministicItems = packagePlan.items.map((item) => ({
+        sku: item.product.sku,
+        quantity: item.quantity,
+      }))
+      const deterministicSelections = validateCartSelectionItems(deterministicItems)
+      const exactSelection = deterministicSelections.length === deterministicItems.length
+      const deterministicAssessment = exactSelection
+        ? await assessValidatedSelections(deterministicSelections)
+        : { guard: 'موجودی یکی از اقلام این پکیج تغییر کرده و باید ترکیب را دوباره بسازم.' as string | null, capacityGuard: null as string | null }
 
-      const deterministicAssessment = await assessValidatedSelections(deterministicSelections)
-      if (deterministicAssessment.guard) {
-        const message = deterministicAssessment.capacityGuard
-          ? deterministicAssessment.guard
-          : 'ترکیب پیشنهادی از کنترل نهایی عبور نکرد؛ چیزی رو حدسی وارد سبد نمی‌کنم. یک مورد از اطلاعات یا موجودی باید دوباره بررسی بشه.'
+      if (!exactSelection || deterministicAssessment.guard) {
+        const message = deterministicAssessment.guard
+          ?? 'موجودی یکی از اقلام این پکیج تغییر کرده و باید ترکیب را دوباره بسازم.'
 
         await db.insert(chatMessages).values({
           sessionId,
           role: 'assistant',
           content: message,
+          metadata: {
+            requestId,
+            packageMode: 'security_system',
+            packageNeeds: packagePlan.needs,
+            cartPlan: [],
+          },
         })
 
         return NextResponse.json({
@@ -784,26 +829,86 @@ export async function POST(req: NextRequest) {
         })
       }
 
-      const openingCount = (needs.doors ?? 0) + (needs.windows ?? 0)
-      const areaText = needs.areaM2
-        ? `برای خونه ${needs.areaM2.toLocaleString('fa-IR')} متری با ${needs.windows?.toLocaleString('fa-IR')} پنجره و ${needs.doors?.toLocaleString('fa-IR')} در ورودی،`
-        : `برای ${needs.windows?.toLocaleString('fa-IR')} پنجره و ${needs.doors?.toLocaleString('fa-IR')} در ورودی،`
+      const roleLabel = (product: DeterministicPackageProduct): string => {
+        const role = classifySecurityProduct(product)
+        if (role === 'panel') return 'پنل مرکزی'
+        if (role === 'opening_sensor') return 'حفاظت در و پنجره'
+        if (role === 'motion_sensor') return 'پوشش فضاهای اصلی'
+        if (role === 'intrusion_sensor') return 'حسگر تشخیص نفوذ'
+        return product.name
+      }
 
-      const panelItem = packagePlan.items[0]!
-      const openingItem = packagePlan.items[1]!
-      const motionItem = packagePlan.items[2]!
+      const designLabel = packagePlan.design === 'wireless'
+        ? 'بی‌سیم'
+        : packagePlan.design === 'hybrid'
+          ? 'ترکیبی'
+          : 'سیمی با زون‌های مستقل'
+
       const totalToman = Math.floor(packagePlan.totalPrice / 10).toLocaleString('fa-IR')
+      const needsSummary = [
+        packagePlan.needs.areaM2
+          ? `${packagePlan.needs.areaM2.toLocaleString('fa-IR')} متر`
+          : null,
+        packagePlan.needs.windows !== null
+          ? `${packagePlan.needs.windows.toLocaleString('fa-IR')} پنجره`
+          : null,
+        packagePlan.needs.doors !== null
+          ? `${packagePlan.needs.doors.toLocaleString('fa-IR')} در ورودی`
+          : null,
+        packagePlan.needs.motionAreas !== null
+          ? `${packagePlan.needs.motionAreas.toLocaleString('fa-IR')} فضای اصلی`
+          : null,
+      ].filter(Boolean).join('، ')
+
+      const itemLines = packagePlan.items.map((item) => (
+        `• ${item.product.sku} ×${item.quantity.toLocaleString('fa-IR')} — ${roleLabel(item.product)}`
+      ))
+
+      const capacityNotes: string[] = []
+      if (
+        packagePlan.wiredDetectorCount > 0
+        && packagePlan.panelWiredCapacity !== null
+      ) {
+        capacityNotes.push(
+          `${packagePlan.wiredDetectorCount.toLocaleString('fa-IR')} نقطه سیمی مستقل از ${packagePlan.panelWiredCapacity.toLocaleString('fa-IR')} زون سیمی پنل استفاده می‌کند`,
+        )
+      }
+      if (
+        packagePlan.wirelessDetectorCount > 0
+        && packagePlan.panelWirelessCapacity !== null
+      ) {
+        capacityNotes.push(
+          `${packagePlan.wirelessDetectorCount.toLocaleString('fa-IR')} حسگر بی‌سیم داخل ظرفیت ${packagePlan.panelWirelessCapacity.toLocaleString('fa-IR')} زون بی‌سیم پنل است`,
+        )
+      }
 
       const recommendation = [
-        `${areaText} این پکیج پایه سیمی رو پیشنهاد می‌دم:`,
-        `• ${panelItem.product.sku} ×۱ — پنل مرکزی`,
-        `• ${openingItem.product.sku} ×${openingCount.toLocaleString('fa-IR')} — برای همه درها و پنجره‌ها`,
-        `• ${motionItem.product.sku} ×${motionItem.quantity.toLocaleString('fa-IR')} — پوشش پایه فضای داخلی`,
-        `جمع: حدود ${totalToman} تومان. این ترکیب ${packagePlan.wiredDetectorCount.toLocaleString('fa-IR')} نقطه سیمی دارد و پنل انتخابی ظرفیت ثبت‌شده ${packagePlan.panelWiredCapacity.toLocaleString('fa-IR')} زون سیمی دارد.`,
-        'اگر اوکیه بگو «بذار تو سبد»؛ همین ترکیب رو مستقیم اضافه می‌کنم.',
+        assumedMotionCoverage
+          ? `با فرض پایهٔ یک فضای اصلی، برای ${needsSummary || 'نیاز فعلی'} این پکیج ${designLabel} رو پیشنهاد می‌دم:`
+          : `برای ${needsSummary || 'نیاز فعلی'} این پکیج ${designLabel} رو پیشنهاد می‌دم:`,
+        ...itemLines,
+        ...(capacityNotes.length > 0
+          ? [`کنترل ظرفیت: ${capacityNotes.join(' و ')}.`]
+          : []),
+        `جمع فعلی: حدود ${totalToman} تومان.`,
+        assumedMotionCoverage
+          ? 'این یک پکیج پایه است؛ اگر فضای اصلی بیشتری داری تعداد چشمی‌ها رو قبل از خرید اصلاح می‌کنیم.'
+          : 'اگر اوکیه بگو «بذار تو سبد»؛ همین ترکیب دقیق رو اضافه می‌کنم.',
       ].join('\n')
 
-      const wantsImmediatePurchase = isExplicitCartPurchaseIntent(latestUserText)
+      const wantsImmediatePurchase = (
+        isExplicitCartPurchaseIntent(latestUserText)
+        && !assumedMotionCoverage
+      )
+      const cartActionId = wantsImmediatePurchase
+        ? requestId ?? `cart-${sessionId}-${Date.now()}`
+        : undefined
+      const cartActionItems = wantsImmediatePurchase
+        ? deterministicSelections.map(({ product, quantity }) => ({
+            sku: product.sku,
+            quantity,
+          }))
+        : undefined
       const cartItems = wantsImmediatePurchase
         ? deterministicSelections.map(({ product, quantity }) => ({
             id: product.id,
@@ -820,25 +925,35 @@ export async function POST(req: NextRequest) {
         : []
 
       const message = wantsImmediatePurchase
-        ? 'حتماً 👌 پکیج مناسب رو از روی اطلاعاتی که دادی ساختم و مستقیم به سبد خرید اضافه کردم.'
+        ? 'حتماً 👌 همین پکیج تأییدشده رو با تعدادهای دقیق به سبد خرید اضافه کردم.'
         : recommendation
+      const persistedPlan = wantsImmediatePurchase
+        ? []
+        : deterministicSelections.map(({ product, quantity }) => ({
+            sku: product.sku,
+            quantity,
+          }))
 
       await db.insert(chatMessages).values({
         sessionId,
         role: 'assistant',
         content: message,
+        metadata: {
+          requestId,
+          cartActionId,
+          cartActionItems,
+          cartPlan: persistedPlan,
+          packageMode: 'security_system',
+          packageNeeds: packagePlan.needs,
+        },
       })
 
       return NextResponse.json({
         message,
         session_id: sessionId,
         cartItems,
-        cartPlan: wantsImmediatePurchase
-          ? []
-          : packagePlan.items.map((item) => ({
-              sku: item.product.sku,
-              quantity: item.quantity,
-            })),
+        cartActionId,
+        cartPlan: persistedPlan,
         leadCaptured: false,
       })
     }
