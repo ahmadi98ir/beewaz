@@ -302,7 +302,7 @@ export function ChatWidget() {
 
           if (!alreadyProcessed) {
             data.cartItems.forEach((item) => {
-              const quantity = Math.max(1, Math.min(20, Math.floor(item.quantity || 1)))
+              const quantity = Math.max(1, Math.min(999, Math.floor(item.quantity || 1)))
               const { quantity: _quantity, ...cartItem } = item
               addCartItemQuantity(cartItem, quantity)
             })
