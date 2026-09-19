@@ -48,7 +48,7 @@ describe('security system builder', () => {
     expect(assessment.hasPanel).toBe(true)
     expect(assessment.hasDetection).toBe(false)
     expect(assessment.missingRequired).toContain('intrusion_detection')
-    expect(securityCartGuardMessage(assessment)).toContain('پنل مرکزی به‌تنهایی')
+    expect(securityCartGuardMessage(assessment)).toContain('پنل به‌تنهایی')
   })
 
   it('accepts a panel with at least one intrusion detector', () => {
