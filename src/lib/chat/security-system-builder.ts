@@ -16,6 +16,7 @@ export interface SecurityCatalogProduct {
   category?: string | null
   categorySlug?: string | null
   description?: string | null
+  specs?: Array<{ key: string; value: string }>
 }
 
 function normalizedProductText(product: SecurityCatalogProduct): string {
@@ -137,6 +138,62 @@ export function shouldEnforceSystemCompleteness(conversationText: string): boole
   if (explicitPanelOnly) return false
 
   return /(سیستم|پکیج|کامل|خونه|خانه|آپارتمان|ویلا|سنسور|حسگر|امنیت|حفاظت|راهنما|هیچی.*سر.*در|لازم|نیاز)/i.test(normalized)
+}
+
+
+function toAsciiDigits(text: string): string {
+  const persian = '۰۱۲۳۴۵۶۷۸۹'
+  const arabic = '٠١٢٣٤٥٦٧٨٩'
+  return Array.from(text).map((char) => {
+    const p = persian.indexOf(char)
+    if (p >= 0) return String(p)
+    const a = arabic.indexOf(char)
+    if (a >= 0) return String(a)
+    return char
+  }).join('')
+}
+
+export function isWiredSecurityProduct(product: SecurityCatalogProduct): boolean {
+  const text = normalizedProductText(product)
+  return /(سیمی|wired)/.test(text) && !/(بیسیم|wireless)/.test(text)
+}
+
+export function getPanelWiredZoneCapacity(
+  panel: SecurityCatalogProduct,
+): number | null {
+  for (const spec of panel.specs ?? []) {
+    const key = normalizeProductReferenceText(spec.key)
+    if (!key.includes('زون') || !key.includes('سیمی') || key.includes('بیسیم')) continue
+
+    const match = toAsciiDigits(spec.value).match(/\d+/)
+    if (match) return Number.parseInt(match[0], 10)
+  }
+
+  return null
+}
+
+export function wiredZoneCapacityGuardMessage(
+  products: readonly CartSelectionProduct[],
+): string | null {
+  const panel = products.find(
+    (product) => product.quantity > 0 && classifySecurityProduct(product) === 'panel',
+  )
+  if (!panel) return null
+
+  const capacity = getPanelWiredZoneCapacity(panel)
+  if (capacity === null) return null
+
+  const wiredDetectorCount = products.reduce((sum, product) => {
+    const role = classifySecurityProduct(product)
+    const detector = role === 'motion_sensor' || role === 'opening_sensor'
+    return detector && isWiredSecurityProduct(product)
+      ? sum + Math.max(0, product.quantity)
+      : sum
+  }, 0)
+
+  if (wiredDetectorCount <= capacity) return null
+
+  return `ترکیب فعلی ${wiredDetectorCount} حسگر سیمی دارد، اما برای پنل ${panel.sku} فقط ${capacity} زون سیمی در مشخصات ثبت شده است. قبل از خرید باید یا طراحی/گروه‌بندی زون‌ها مشخص شود، یا بخشی از حسگرها بی‌سیم انتخاب شوند، یا پنلی با ظرفیت مستقل مناسب‌تر انتخاب شود؛ بنابراین این ترکیب را به‌عنوان سیستم آماده نصب به سبد اضافه نمی‌کنم.`
 }
 
 
