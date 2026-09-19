@@ -170,18 +170,49 @@ export function isWiredSecurityProduct(product: SecurityCatalogProduct): boolean
   return /(سیمی|wired)/.test(text) && !/(بیسیم|wireless)/.test(text)
 }
 
+function findWiredZoneCapacity(text: string): number | null {
+  const normalized = toAsciiDigits(text)
+    .replace(/ي/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .replace(/[\u200c\u200f\u202a-\u202e]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  const beforeLabel = normalized.match(
+    /(\d+)\s*(?:عدد\s*)?زون(?:\s*های?)?\s*(?:سیمی|با\s*سیم)/i,
+  )
+  if (beforeLabel) return Number.parseInt(beforeLabel[1]!, 10)
+
+  const afterLabel = normalized.match(
+    /زون(?:\s*های?)?\s*(?:سیمی|با\s*سیم)\s*[:：\-]?\s*(\d+)/i,
+  )
+  if (afterLabel) return Number.parseInt(afterLabel[1]!, 10)
+
+  return null
+}
+
 export function getPanelWiredZoneCapacity(
   panel: SecurityCatalogProduct,
 ): number | null {
+  // Production product specs commonly store this under a generic key such as
+  // «اتصالات» with a value like «9 عدد زون سیمی / ...». Therefore the parser
+  // must inspect both key and value, not just keys literally named «زون سیمی».
   for (const spec of panel.specs ?? []) {
+    const explicit = findWiredZoneCapacity(`${spec.key} ${spec.value}`)
+    if (explicit !== null) return explicit
+
     const key = normalizeProductReferenceText(spec.key)
     if (!key.includes('زون') || !key.includes('سیمی') || key.includes('بیسیم')) continue
 
-    const match = toAsciiDigits(spec.value).match(/\d+/)
-    if (match) return Number.parseInt(match[0], 10)
+    const fallback = toAsciiDigits(spec.value).match(/\d+/)
+    if (fallback) return Number.parseInt(fallback[0], 10)
   }
 
-  return null
+  // Some live rows carry the capacity in the product description even when a
+  // structured spec is absent or uses an unexpected key.
+  return findWiredZoneCapacity(
+    [panel.name, panel.description ?? ''].join(' '),
+  )
 }
 
 export function wiredZoneCapacityGuardMessage(
