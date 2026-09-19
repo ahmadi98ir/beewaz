@@ -136,6 +136,13 @@ export interface CartDirective {
   items: CartDirectiveItem[]
 }
 
+
+export function canonicalizeSku(text: string): string {
+  return normalizeDigits(text)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+}
+
 /**
  * Parses the hidden cart action marker emitted by BEE and strips it from the
  * user-visible reply.
@@ -148,26 +155,43 @@ export interface CartDirective {
  * prevents arbitrary model text from becoming cart mutations.
  */
 export function extractCartDirective(text: string): CartDirective {
+  const machineMatches = Array.from(text.matchAll(/\[BEE_CART_ADD:([^\]]+)\]/gi))
+  const persianMatches = Array.from(text.matchAll(
+    /\[\s*(?:به\s+سبد\s+اضافه\s+می(?:\u200c|\s)*شود|افزودن\s+به\s+سبد(?:\s+خرید)?|اضافه\s+به\s+سبد(?:\s+خرید)?|ربط\s+به\s+سبد\s+خرید)\s*:\s*([^\]]+)\]/gi,
+  ))
+
   const stripInternalCartAnnotations = (value: string) => value
     .replace(/\s*\[BEE_CART_ADD:[^\]]+\]\s*/gi, '\n')
-    // Occasionally the model explains the hidden action in Persian. Strip only
-    // bracketed internal-action looking blocks; ordinary cart prose stays visible.
-    .replace(/\s*\[\s*(?:ربط\s+به|افزودن\s+به|اضافه\s+به)\s+سبد\s*خرید\s*:[\s\S]*?\]\s*/gi, '\n')
+    .replace(
+      /\s*\[\s*(?:به\s+سبد\s+اضافه\s+می(?:\u200c|\s)*شود|افزودن\s+به\s+سبد(?:\s+خرید)?|اضافه\s+به\s+سبد(?:\s+خرید)?|ربط\s+به\s+سبد\s+خرید)\s*:[\s\S]*?\]\s*/gi,
+      '\n',
+    )
     .trim()
 
-  const matches = Array.from(text.matchAll(/\[BEE_CART_ADD:([^\]]+)\]/gi))
-  if (matches.length === 0) {
+  const payloads = [
+    ...machineMatches.map((match) => match[1] ?? ''),
+    ...persianMatches.map((match) => match[1] ?? ''),
+  ]
+
+  if (payloads.length === 0) {
     return { cleanText: stripInternalCartAnnotations(text), items: [] }
   }
 
   const quantities = new Map<string, number>()
 
-  for (const token of matches.flatMap((match) => (match[1] ?? '').split(','))) {
-    const trimmed = token.trim().toUpperCase()
-    const parsed = trimmed.match(/^([A-Z0-9_-]{2,32})(?:\*(\d{1,2}))?$/)
+  for (const token of payloads.flatMap((payload) => payload.split(/[,،\n]+/))) {
+    const trimmed = token
+      .replace(/^[-•\s]+/, '')
+      .replace(/\([^)]*\)/g, '')
+      .trim()
+      .toUpperCase()
+
+    const parsed = trimmed.match(/^([A-Z0-9_-]{2,32})\s*(?:\*|×|X)?\s*(\d{1,2})?$/i)
     if (!parsed) continue
 
-    const sku = parsed[1]!
+    const sku = canonicalizeSku(parsed[1]!)
+    if (!sku) continue
+
     const rawQuantity = parsed[2] ? Number.parseInt(parsed[2], 10) : 1
     const quantity = Math.min(20, Math.max(1, Number.isFinite(rawQuantity) ? rawQuantity : 1))
     quantities.set(sku, Math.min(20, (quantities.get(sku) ?? 0) + quantity))
