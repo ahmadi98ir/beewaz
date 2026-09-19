@@ -8,7 +8,6 @@ import {
   buildStructuredSpecComparison,
   canonicalizeSku,
   extractCartSignals,
-  findLatestSingleMentionedProduct,
   hasCartPlanModificationIntent,
   isCartCommitIntent,
   isExplicitCartPurchaseIntent,
