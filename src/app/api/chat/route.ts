@@ -352,11 +352,19 @@ async function getOrCreateSession(
   sessionId: string | undefined,
   visitorToken: string | undefined,
 ): Promise<string> {
-  if (sessionId) {
+  const safeVisitorToken = visitorToken?.trim().slice(0, 100)
+
+  // Never accept a browser-supplied session UUID by itself. Once we use the
+  // persisted transcript as canonical context, ownership must be tied to the
+  // same anonymous visitor token that created the session.
+  if (sessionId && safeVisitorToken) {
     const [existing] = await db
       .select({ id: chatSessions.id })
       .from(chatSessions)
-      .where(eq(chatSessions.id, sessionId))
+      .where(and(
+        eq(chatSessions.id, sessionId),
+        eq(chatSessions.visitorToken, safeVisitorToken),
+      ))
       .limit(1)
     if (existing) return existing.id
   }
@@ -364,12 +372,36 @@ async function getOrCreateSession(
   const [created] = await db
     .insert(chatSessions)
     .values({
-      visitorToken: visitorToken ?? null,
+      visitorToken: safeVisitorToken ?? null,
       status: 'active',
     })
     .returning({ id: chatSessions.id })
 
   return created!.id
+}
+
+function normalizeDecimalDigits(text: string): string {
+  const persian = '۰۱۲۳۴۵۶۷۸۹'
+  const arabic = '٠١٢٣٤٥٦٧٨٩'
+  return Array.from(text).map((char) => {
+    const p = persian.indexOf(char)
+    if (p >= 0) return String(p)
+    const a = arabic.indexOf(char)
+    if (a >= 0) return String(a)
+    return char
+  }).join('')
+}
+
+function extractIranMobile(text: string): string | null {
+  const normalized = normalizeDecimalDigits(text).replace(/[\s()-]/g, '')
+  const match = normalized.match(/(?:\+98|0098|0)?9\d{9}/)
+  if (!match) return null
+
+  const raw = match[0]
+  if (raw.startsWith('+98')) return '0' + raw.slice(3)
+  if (raw.startsWith('0098')) return '0' + raw.slice(4)
+  if (raw.startsWith('9')) return '0' + raw
+  return raw
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -378,11 +410,14 @@ interface ChatRequest {
   messages: { role: 'user' | 'model'; text: string }[]
   session_id?: string
   visitorToken?: string
+  request_id?: string
   cart?: Array<{
     sku: string
     nameFa: string
     quantity: number
   }>
+  // Legacy clients may still send this during a rolling deployment. The server
+  // treats persisted assistant metadata as the primary source of plan state.
   cartPlan?: Array<{
     sku: string
     quantity: number
@@ -397,46 +432,76 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'پیامی ارسال نشده' }, { status: 400 })
     }
 
-    // ── 1. Session management ─────────────────────────────────────────────────
-    const sessionId = await getOrCreateSession(body.session_id, body.visitorToken)
-
-    // ── 2. Persist user message ───────────────────────────────────────────────
-    const lastUserMsg = body.messages.findLast((m) => m.role === 'user')
-    if (lastUserMsg) {
-      await db.insert(chatMessages).values({
-        sessionId,
-        role: 'user',
-        content: lastUserMsg.text,
-      })
+    const lastUserMsg = body.messages.findLast((message) => message.role === 'user')
+    if (!lastUserMsg?.text?.trim()) {
+      return NextResponse.json({ error: 'پیامی ارسال نشده' }, { status: 400 })
     }
 
-    // ── 3. Build context and call AI ─────────────────────────────────────────
-    // Keep product/spec grounding alive across short follow-up turns such as
-    // «خودت کدومو پیشنهاد میدی؟» where the model names are omitted.
-    const recentUserContext = body.messages
+    const requestId = body.request_id?.trim().slice(0, 100) || undefined
+
+    // ── 1. Session management ───────────────────────────────────────────────
+    const sessionId = await getOrCreateSession(body.session_id, body.visitorToken)
+
+    // ── 2. Persist current user turn ────────────────────────────────────────
+    await db.insert(chatMessages).values({
+      sessionId,
+      role: 'user',
+      content: lastUserMsg.text.trim(),
+      metadata: requestId ? { requestId } : undefined,
+    })
+
+    // The database transcript is canonical. This survives refreshes and avoids
+    // trusting a client-provided copy of previous assistant messages.
+    const persistedDesc = await db
+      .select({
+        role: chatMessages.role,
+        content: chatMessages.content,
+        metadata: chatMessages.metadata,
+        createdAt: chatMessages.createdAt,
+      })
+      .from(chatMessages)
+      .where(eq(chatMessages.sessionId, sessionId))
+      .orderBy(desc(chatMessages.createdAt))
+      .limit(40)
+
+    const persistedMessages = persistedDesc.reverse()
+    const canonicalMessages = persistedMessages
+      .filter((message) => message.role === 'user' || message.role === 'assistant')
+      .map((message) => ({
+        role: message.role === 'user' ? 'user' as const : 'model' as const,
+        text: message.content,
+      }))
+
+    const userTexts = canonicalMessages
       .filter((message) => message.role === 'user')
-      .slice(-4)
       .map((message) => message.text)
-      .join('\n')
-    const systemIntentContext = body.messages
-      .filter((message) => message.role === 'user')
-      .slice(-12)
-      .map((message) => message.text)
-      .join('\n')
+
+    const recentUserContext = userTexts.slice(-4).join('\n')
+    const systemIntentContext = userTexts.slice(-12).join('\n')
+
+    const latestSalesMessage = [...persistedMessages]
+      .reverse()
+      .find((message) => (
+        message.role === 'assistant'
+        && (
+          message.metadata?.packageMode === 'security_system'
+          || (message.metadata?.cartPlan?.length ?? 0) > 0
+        )
+      ))
+    const latestSalesState = latestSalesMessage?.metadata ?? null
+
+    // ── 3. Load authoritative catalog context ───────────────────────────────
     const { catalogContext, mentionedContext, products: catalogProducts } =
       await getProductContext(recentUserContext)
 
     const currentCart = Array.isArray(body.cart) ? body.cart.slice(0, 50) : []
-    const userTexts = body.messages
-      .filter((message) => message.role === 'user')
-      .map((message) => message.text)
     const cartContext = currentCart.length > 0
       ? currentCart
           .map((item) => `- ${item.sku} | ${item.nameFa} | تعداد: ${Math.max(1, item.quantity || 1)}`)
           .join('\n')
       : '- سبد خرید فعلاً خالی است.'
 
-    const latestUserText = lastUserMsg?.text ?? ''
+    const latestUserText = lastUserMsg.text.trim()
     const enforceCompleteness = (
       !isExplicitPanelOnlyRequest(latestUserText)
       && shouldEnforceSystemCompleteness(systemIntentContext)
