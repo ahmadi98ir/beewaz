@@ -179,8 +179,7 @@ export function extractCartDirective(text: string): CartDirective {
 
   const quantities = new Map<string, number>()
 
-  for (const token of payloads.flatMap((payload) => payload.split(/[,
-،]+/))) {
+  for (const token of payloads.flatMap((payload) => payload.split(/[,،\n]+/))) {
     const trimmed = token
       .replace(/^[-•\s]+/, '')
       .replace(/\([^)]*\)/g, '')
