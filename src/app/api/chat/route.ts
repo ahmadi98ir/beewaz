@@ -596,6 +596,75 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const packageCartDelta = (
+      selections: readonly ValidatedSelection[],
+    ): {
+      delta: ValidatedSelection[]
+      conflictingPanelSku: string | null
+      overTargetSku: string | null
+    } => {
+      const targetPanelSkus = new Set(
+        selections
+          .filter(({ product }) => classifySecurityProduct(product) === 'panel')
+          .map(({ product }) => canonicalizeSku(product.sku)),
+      )
+
+      const conflictingPanel = currentCart
+        .map((item) => ({
+          item,
+          product: catalogProducts.find(
+            (candidate) => canonicalizeSku(candidate.sku) === canonicalizeSku(item.sku),
+          ),
+        }))
+        .find(({ product }) => (
+          !!product
+          && classifySecurityProduct(product) === 'panel'
+          && !targetPanelSkus.has(canonicalizeSku(product.sku))
+        ))
+
+      if (conflictingPanel) {
+        return {
+          delta: [],
+          conflictingPanelSku: conflictingPanel.item.sku,
+          overTargetSku: null,
+        }
+      }
+
+      const currentQuantityBySku = new Map<string, number>()
+      for (const item of currentCart) {
+        const sku = canonicalizeSku(item.sku)
+        if (!sku) continue
+        currentQuantityBySku.set(
+          sku,
+          (currentQuantityBySku.get(sku) ?? 0) + Math.max(0, item.quantity || 0),
+        )
+      }
+
+      const delta: ValidatedSelection[] = []
+      for (const selection of selections) {
+        const sku = canonicalizeSku(selection.product.sku)
+        const existing = currentQuantityBySku.get(sku) ?? 0
+        if (existing > selection.quantity) {
+          return {
+            delta: [],
+            conflictingPanelSku: null,
+            overTargetSku: selection.product.sku,
+          }
+        }
+
+        const missing = selection.quantity - existing
+        if (missing > 0) {
+          delta.push({ product: selection.product, quantity: missing })
+        }
+      }
+
+      return {
+        delta,
+        conflictingPanelSku: null,
+        overTargetSku: null,
+      }
+    }
+
     const legacyPlanItems = Array.isArray(body.cartPlan)
       ? body.cartPlan.slice(0, 50)
       : []
