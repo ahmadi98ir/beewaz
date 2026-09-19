@@ -7,6 +7,7 @@ import { eq, and, desc, inArray, isNull } from 'drizzle-orm'
 import {
   buildStructuredSpecComparison,
   extractCartDirective,
+  findLatestSingleMentionedProduct,
   findMentionedProducts,
   productAvailabilityLabel,
   type GroundedProduct,
@@ -14,6 +15,8 @@ import {
 import {
   assessSecurityCart,
   classifySecurityProduct,
+  getPanelWiredZoneCapacity,
+  isExplicitPanelOnlyRequest,
   securityCartGuardMessage,
   shouldEnforceSystemCompleteness,
   wiredZoneCapacityGuardMessage,
@@ -171,11 +174,32 @@ async function getProductContext(lastUserText: string): Promise<{
     ))
 
     const structuredComparison = buildStructuredSpecComparison(mentioned, mentionedSpecs)
+    const panelCapacityLines = panelProducts.map((product) => {
+      const capacity = getPanelWiredZoneCapacity({
+        sku: product.sku,
+        name: product.name,
+        category: product.category,
+        categorySlug: product.categorySlug,
+        description: product.description,
+        specs: panelSpecs
+          .filter((spec) => spec.productId === product.id)
+          .map((spec) => ({ key: spec.key, value: spec.value })),
+      })
+
+      return capacity === null
+        ? `- ${product.sku}: ظرفیت زون سیمی ساختاریافته ثبت نشده است.`
+        : `- ${product.sku}: ${capacity} زون سیمی ثبت‌شده.`
+    })
 
     return {
       catalogContext: [
         'کاتالوگ فعلی فروشگاه (دادهٔ مستقیم از دیتابیس همین سایت):',
         ...snapshots.map(productFactLine),
+        '',
+        'خلاصه قطعی ظرفیت پنل‌های مرکزی:',
+        ...(panelCapacityLines.length > 0
+          ? panelCapacityLines
+          : ['ظرفیت زون سیمی پنل فعالی ثبت نشده است.']),
         '',
         'مشخصات فنی پنل‌های مرکزی قابل پیشنهاد:',
         ...(panelProducts.length > 0
@@ -243,6 +267,7 @@ function buildSystemPrompt(
 - اگر اطلاعات لازم برای انتخاب قطعی کم است، به‌جای انتخاب سلیقه‌ای حداکثر دو سؤال تعیین‌کننده بپرس (مثلاً تعداد نقاط/زون موردنیاز، نیاز به نوع ارتباط خاص، یا محدودیت بودجه).
 - در پیشنهاد نهایی، دقیقاً توضیح بده کدام نیاز کاربر به کدام مشخصهٔ ثبت‌شده وصل شده است؛ از «بهتر/حرفه‌ای‌تر/پیشرفته‌تر» بدون معیار مشخص استفاده نکن.
 - اگر کاربر می‌گوید «اونی که بهتره»، «بهتر» را مطلق تفسیر نکن. فقط مدلی را انتخاب کن که برای نیازهای همین مشتری با یک یا چند تفاوت مستند مناسب‌تر باشد و همان معیارها را نام ببر.
+- اگر انتخاب پنل به تعداد حسگرهای سیمی مربوط است، تعداد نقاط سیمی را صریح جمع بزن و ظرفیت زون سیمی هر پنل را با عدد ثبت‌شده مقایسه کن؛ از عبارت کلی «امکانات بیشتری دارد» به‌جای این استدلال استفاده نکن.
 - قبل از نهایی‌کردن پنل، نوع اتصال سنسورهای پیشنهادی (سیمی/بی‌سیم) را با ظرفیت زون‌های ثبت‌شده پنل تطبیق بده. اگر تعداد حسگرهای سیمی از تعداد زون‌های سیمی بیشتر است، بدون توضیح درباره طراحی زون/گروه‌بندی یا جایگزین بی‌سیم ادعای «کامل و آماده نصب» نکن.
 - متراژ خانه به‌تنهایی برای انتخاب پنل کافی نیست. اگر کاربر مبتدی است، با زبان ساده از تعداد درهای ورودی، پنجره‌های قابل‌دسترسی، اتاق‌ها/فضاهای اصلی و ترجیح نصب سیمی/بی‌سیم کمک بگیر؛ اگر خودش نمی‌داند، توضیح بده هرکدام چه اثری در تعداد زون و سنسور دارد.
 - موجودی عددی دقیق انبار را فقط وقتی مشتری مشخصاً درباره تعداد موجودی پرسید بیان کن؛ در حالت عادی فقط «موجود» یا «ناموجود» بگو.
@@ -264,6 +289,7 @@ function buildSystemPrompt(
 - داخل این marker فقط SKU دقیق محصولاتی را بگذار که در متن همان پاسخ صریحاً به‌عنوان ترکیب نهایی برای خرید لیست کرده‌ای و طبق کاتالوگ active و دارای stock>0 هستند.
 - اگر مشتری یک سیستم کامل/پکیج حفاظتی می‌خواهد، marker نباید فقط شامل پنل باشد؛ حداقل باید حسگر تشخیص نفوذ مناسب هم در ترکیب نهایی وجود داشته باشد.
 - اگر هنوز تعداد/نوع حسگر لازم مشخص نیست، marker نساز و اول سؤال کوتاه لازم را بپرس یا فرض پکیج پایه را صریحاً اعلام کن و تأیید بگیر.
+- وقتی مشتری بعد از مشخص‌شدن ترکیب می‌گوید «اضافه کن»، «همینو اضافه کن»، «اوکی اضافه کن»، «تأیید می‌کنم» یا عبارت روشن مشابه، تأیید دوباره نگیر؛ همان نوبت cart action را اجرا کن.
 - marker را برای توضیح، مقایسه، قیمت‌پرسیدن یا پیشنهاد عادی نساز.
 - marker یا توضیح داخلی آن را هرگز به‌صورت متن قابل مشاهده مثل «[ربط به سبد خرید: ...]» ننویس؛ فقط همان marker دقیق ماشینی را در انتهای پاسخ قرار بده.
 - اگر یک «ترکیب نهایی خرید» را در متن می‌نویسی و cart action می‌سازی، marker باید همهٔ اقلام همان ترکیب نهایی را با همان تعداد شامل شود. حذف پنل یا یکی از اجزای اصلی از marker ممنوع است.
@@ -364,6 +390,11 @@ export async function POST(req: NextRequest) {
       .slice(-4)
       .map((message) => message.text)
       .join('\n')
+    const systemIntentContext = body.messages
+      .filter((message) => message.role === 'user')
+      .slice(-12)
+      .map((message) => message.text)
+      .join('\n')
     const { catalogContext, mentionedContext, products: catalogProducts } =
       await getProductContext(recentUserContext)
 
@@ -392,11 +423,16 @@ export async function POST(req: NextRequest) {
       })
       .filter((selection): selection is { product: ProductSnapshot; quantity: number } => !!selection)
 
-    const enforceCompleteness = shouldEnforceSystemCompleteness(recentUserContext)
+    const latestUserText = lastUserMsg?.text ?? ''
+    const enforceCompleteness = (
+      !isExplicitPanelOnlyRequest(latestUserText)
+      && shouldEnforceSystemCompleteness(systemIntentContext)
+    )
 
-    // LLMs occasionally list the chosen panel in the visible "final package"
-    // but omit it from the hidden cart marker. For full-system intents, recover
-    // exactly one explicitly mentioned in-stock panel from the same reply.
+    // LLMs occasionally list the chosen panel in an earlier recommendation
+    // but omit it from a terse confirmation turn's hidden cart marker. For a
+    // full-system purchase, recover the most recent unambiguous panel choice
+    // from the current reply and recent conversation context.
     if (enforceCompleteness) {
       const selectedHasPanel = validatedSelections.some(
         ({ product }) => classifySecurityProduct({
@@ -409,22 +445,34 @@ export async function POST(req: NextRequest) {
       )
 
       if (!selectedHasPanel) {
-        const mentionedPanels = findMentionedProducts(cleanText, catalogProducts)
-          .filter((product) => (
-            product.status === 'active'
-            && product.stock > 0
-            && classifySecurityProduct({
-              sku: product.sku,
-              name: product.name,
-              category: product.category,
-              categorySlug: product.categorySlug,
-              description: product.description,
-            }) === 'panel'
-          ))
+        const purchasablePanels = catalogProducts.filter((product) => (
+          product.status === 'active'
+          && product.stock > 0
+          && classifySecurityProduct({
+            sku: product.sku,
+            name: product.name,
+            category: product.category,
+            categorySlug: product.categorySlug,
+            description: product.description,
+          }) === 'panel'
+        ))
 
-        if (mentionedPanels.length === 1) {
+        const recoveryTexts = [
+          cleanText,
+          ...body.messages
+            .slice(-10)
+            .reverse()
+            .map((message) => message.text),
+        ]
+
+        const recoveredPanel = findLatestSingleMentionedProduct(
+          recoveryTexts,
+          purchasablePanels,
+        )
+
+        if (recoveredPanel) {
           validatedSelections = [
-            { product: mentionedPanels[0]!, quantity: 1 },
+            { product: recoveredPanel, quantity: 1 },
             ...validatedSelections,
           ]
         }

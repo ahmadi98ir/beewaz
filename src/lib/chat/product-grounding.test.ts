@@ -3,6 +3,7 @@ import {
   buildStructuredSpecComparison,
   extractCartDirective,
   findMentionedProducts,
+  findLatestSingleMentionedProduct,
   normalizeProductReferenceText,
   productAvailabilityLabel,
   type GroundedProduct,
@@ -31,6 +32,32 @@ describe('product grounding helpers', () => {
   it('recovers BHP model codes produced by mobile STT', () => {
     const matches = findMentionedProducts('پنل bh۲۱ و پنل bhp۲۰', PRODUCTS)
     expect(matches.map((product) => product.sku)).toEqual(['BH20', 'BH21'])
+  })
+
+
+  it('recovers the most recent unambiguous panel from follow-up context', () => {
+    const selected = findLatestSingleMentionedProduct(
+      [
+        'ترکیب نهایی به سبد اضافه می‌شود.',
+        'من پنل BH21 رو برای این ترکیب انتخاب می‌کنم.',
+        'بین BH20 و BH21 کدوم بهتره؟',
+      ],
+      PRODUCTS,
+    )
+
+    expect(selected?.sku).toBe('BH21')
+  })
+
+  it('skips ambiguous messages and keeps searching older context', () => {
+    const selected = findLatestSingleMentionedProduct(
+      [
+        'BH20 و BH21 هر دو موجودند.',
+        'برای این پکیج BH21 رو انتخاب می‌کنم.',
+      ],
+      PRODUCTS,
+    )
+
+    expect(selected?.sku).toBe('BH21')
   })
 
 
