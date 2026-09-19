@@ -83,6 +83,13 @@ describe('product grounding helpers', () => {
     ])
   })
 
+  it('strips bracketed Persian internal cart-action explanations', () => {
+    const parsed = extractCartDirective(
+      'ترکیب آماده شد. [ربط به سبد خرید:\n- BH20 * 1\n- MG10 * 7]',
+    )
+    expect(parsed.cleanText).toBe('ترکیب آماده شد.')
+  })
+
   it('distinguishes visible zero-stock products from purchasable products', () => {
     expect(productAvailabilityLabel(PRODUCTS[0]!)).toContain('موجود برای خرید')
     expect(productAvailabilityLabel({ ...PRODUCTS[1]!, stock: 0 })).toBe(
