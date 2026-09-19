@@ -83,7 +83,7 @@ export const chatMessages = pgTable('chat_messages', {
       doors: number | null
       windows: number | null
       motionAreas: number | null
-      wiringPreference: 'wired' | 'wireless' | 'unknown'
+      wiringPreference: 'wired' | 'wireless' | 'hybrid' | 'unknown'
       novice: boolean
     }
   }>(),
