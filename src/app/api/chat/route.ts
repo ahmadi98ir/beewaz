@@ -15,6 +15,7 @@ import {
 import {
   assessSecurityCart,
   classifySecurityProduct,
+  getPanelWiredZoneCapacity,
   isExplicitPanelOnlyRequest,
   securityCartGuardMessage,
   shouldEnforceSystemCompleteness,
@@ -173,11 +174,32 @@ async function getProductContext(lastUserText: string): Promise<{
     ))
 
     const structuredComparison = buildStructuredSpecComparison(mentioned, mentionedSpecs)
+    const panelCapacityLines = panelProducts.map((product) => {
+      const capacity = getPanelWiredZoneCapacity({
+        sku: product.sku,
+        name: product.name,
+        category: product.category,
+        categorySlug: product.categorySlug,
+        description: product.description,
+        specs: panelSpecs
+          .filter((spec) => spec.productId === product.id)
+          .map((spec) => ({ key: spec.key, value: spec.value })),
+      })
+
+      return capacity === null
+        ? `- ${product.sku}: ظرفیت زون سیمی ساختاریافته ثبت نشده است.`
+        : `- ${product.sku}: ${capacity} زون سیمی ثبت‌شده.`
+    })
 
     return {
       catalogContext: [
         'کاتالوگ فعلی فروشگاه (دادهٔ مستقیم از دیتابیس همین سایت):',
         ...snapshots.map(productFactLine),
+        '',
+        'خلاصه قطعی ظرفیت پنل‌های مرکزی:',
+        ...(panelCapacityLines.length > 0
+          ? panelCapacityLines
+          : ['ظرفیت زون سیمی پنل فعالی ثبت نشده است.']),
         '',
         'مشخصات فنی پنل‌های مرکزی قابل پیشنهاد:',
         ...(panelProducts.length > 0
