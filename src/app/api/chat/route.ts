@@ -27,6 +27,7 @@ import {
 } from '@/lib/chat/security-system-builder'
 import {
   applyPackageQuestionAnswer,
+  applyPackageRequirementAdjustment,
   buildDeterministicSecurityPackage,
   extractSecurityNeeds,
   isPackageRecommendationIntent,
@@ -822,7 +823,9 @@ export async function POST(req: NextRequest) {
     const pendingPackageQuestion = latestSalesState?.packageQuestionKey ?? null
     const previousPackageNeeds = latestSalesState?.packageNeeds ?? null
 
-    let packageNeeds = extractSecurityNeeds(userTexts, previousPackageNeeds)
+    let packageNeeds = previousPackageNeeds
+      ? applyPackageRequirementAdjustment(previousPackageNeeds, latestUserText).needs
+      : extractSecurityNeeds(userTexts)
     const pendingAnswer = applyPackageQuestionAnswer(
       packageNeeds,
       pendingPackageQuestion,
