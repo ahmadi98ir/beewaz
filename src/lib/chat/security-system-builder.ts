@@ -278,6 +278,28 @@ export function getPanelWirelessZoneCapacity(
   return getPanelZoneCapacity(panel, true)
 }
 
+
+export function getWirelessFrequenciesMHz(
+  product: SecurityCatalogProduct,
+): number[] {
+  const source = [
+    product.name,
+    product.description ?? '',
+    ...(product.specs ?? []).flatMap((spec) => [spec.key, spec.value]),
+  ].join(' ')
+
+  const normalized = toAsciiDigits(source)
+    .replace(/ي/g, 'ی')
+    .replace(/ك/g, 'ک')
+
+  const frequencies = Array.from(
+    normalized.matchAll(/(\d{3,4}(?:\.\d+)?)\s*(?:mhz|مگاهرتز)/gi),
+    (match) => Number.parseFloat(match[1]!),
+  ).filter((value) => Number.isFinite(value) && value >= 100 && value <= 1000)
+
+  return Array.from(new Set(frequencies))
+}
+
 /**
  * A wired detector count is not inherently the same thing as used wired zones:
  * installers can group multiple contacts on one zone. We only block the
