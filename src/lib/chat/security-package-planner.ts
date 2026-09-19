@@ -233,6 +233,60 @@ function activeProducts(
   return products.filter((product) => product.status === 'active' && product.stock > 0)
 }
 
+
+export function applyPackageRequirementAdjustment(
+  current: SecurityNeeds,
+  text: string,
+): { needs: SecurityNeeds; handled: boolean } {
+  const normalized = normalizeText(text)
+  const number = numberTokenPattern()
+
+  const rules: Array<{
+    field: 'doors' | 'windows' | 'motionAreas'
+    noun: string
+  }> = [
+    { field: 'doors', noun: '(?:در|درب)(?:\\s*ورودی)?' },
+    { field: 'windows', noun: 'پنجره' },
+    { field: 'motionAreas', noun: '(?:چشمی|فضا(?:ی)?\\s*اصلی|نقطه\\s*حرکتی)' },
+  ]
+
+  for (const rule of rules) {
+    const addMatch = normalized.match(new RegExp(
+      number + '\\s*(?:تا|عدد)?\\s*' + rule.noun + '[^\\n]{0,24}(?:دیگه|دیگر|اضافه)',
+      'i',
+    ))
+    const subtractMatch = normalized.match(new RegExp(
+      number + '\\s*(?:تا|عدد)?\\s*' + rule.noun + '[^\\n]{0,24}(?:کم|حذف)',
+      'i',
+    ))
+    const matched = addMatch ?? subtractMatch
+    const amount = parseCountToken(matched?.[1])
+    if (amount === null) continue
+
+    const base = current[rule.field]
+    if (base === null) {
+      return { needs: current, handled: false }
+    }
+
+    const nextValue = subtractMatch
+      ? Math.max(0, base - amount)
+      : base + amount
+
+    return {
+      needs: {
+        ...extractSecurityNeeds([text], current),
+        [rule.field]: nextValue,
+      },
+      handled: true,
+    }
+  }
+
+  return {
+    needs: extractSecurityNeeds([text], current),
+    handled: false,
+  }
+}
+
 function preferredProduct(
   products: readonly DeterministicPackageProduct[],
   preferredSku: string,
