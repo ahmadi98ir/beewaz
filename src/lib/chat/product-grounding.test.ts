@@ -7,6 +7,7 @@ import {
   hasCartPlanModificationIntent,
   inferCartPlanFromAssistantText,
   isCartCommitIntent,
+  isExplicitCartPurchaseIntent,
   findMentionedProducts,
   findLatestSingleMentionedProduct,
   normalizeProductReferenceText,
@@ -188,6 +189,16 @@ describe('product grounding helpers', () => {
     expect(isCartCommitIntent('پنلم همون چیزی که فکر می‌کنی خوبه رو بذار')).toBe(true)
     expect(isCartCommitIntent('باشه خوبه همینو برام بذار می‌برم')).toBe(true)
     expect(isCartCommitIntent('قیمت این پکیج چنده؟')).toBe(false)
+  })
+
+
+  it('does not treat conversational acknowledgements as standalone purchase intent', () => {
+    expect(isExplicitCartPurchaseIntent('اوکی چی پیشنهاد میدی؟')).toBe(false)
+    expect(isExplicitCartPurchaseIntent('باشه')).toBe(false)
+    expect(isExplicitCartPurchaseIntent('اوکی')).toBe(false)
+    expect(isExplicitCartPurchaseIntent('اوکی همینو برام بذار تو سبد')).toBe(true)
+    expect(isExplicitCartPurchaseIntent('باشه خوبه همینو برام بذار می‌برم')).toBe(true)
+    expect(isExplicitCartPurchaseIntent('می‌خوام بخرمش')).toBe(true)
   })
 
   it('detects plan modifications separately from plain approval', () => {
