@@ -7,8 +7,10 @@ import { eq, and, desc, inArray, isNull } from 'drizzle-orm'
 import {
   buildStructuredSpecComparison,
   canonicalizeSku,
-  extractCartDirective,
+  extractCartSignals,
   findLatestSingleMentionedProduct,
+  hasCartPlanModificationIntent,
+  isCartCommitIntent,
   findMentionedProducts,
   productAvailabilityLabel,
   type GroundedProduct,
@@ -240,6 +242,7 @@ function buildSystemPrompt(
   catalogContext: string,
   mentionedContext: string,
   cartContext: string,
+  cartPlanContext: string,
 ): string {
   return `تو BEE، دستیار فروش هوشمند رسمی سایت بیواز هستی. الان داخل وب‌سایت رسمی https://beewaz.ir با مشتری صحبت می‌کنی. بیواز فروشگاه تخصصی سیستم‌های امنیتی، دزدگیر، حسگر و تجهیزات هوشمند در ایران است.
 
@@ -285,20 +288,26 @@ function buildSystemPrompt(
 - اگر تعداد دقیق سنسورها هنوز معلوم نیست، قبل از افزودن نهایی به سبد سؤال کوتاه لازم را بپرس یا یک «پکیج پایه با فرض مشخص» ارائه کن و فرض را صریح بگو.
 - سازگاری محصول را حدس نزن. اگر از داده‌های محصول نتوانستی بفهمی یک آژیر/منبع تغذیه/آنتن برای پنل لازم یا سازگار است، آن را خودسرانه به سبد اضافه نکن و فقط بگو نیاز به تأیید دارد.
 
-اقدام سبد خرید:
+برنامه خرید و اقدام سبد:
+- وقتی یک ترکیب مشخص با SKU و تعداد دقیق پیشنهاد می‌دهی اما مشتری هنوز نگفته آن را بخرد، در انتهای پاسخ فقط یک marker مخفی با قالب دقیق [BEE_CART_PLAN:SKU1*QTY,SKU2*QTY] بساز. این marker فقط «پیشنهاد فعلی» است و نباید چیزی را به سبد اضافه کند.
+- وقتی مشتری صریحاً خرید/افزودن/تأیید همان ترکیب را می‌خواهد، به‌جای PLAN از marker دقیق [BEE_CART_ADD:SKU1*QTY,SKU2*QTY] استفاده کن.
+- هیچ‌وقت marker فارسی مثل «[به سبد اضافه می‌شود: ...]» نساز. فقط دو قالب BEE_CART_PLAN و BEE_CART_ADD مجازند.
 - تو می‌توانی با درخواست صریح مشتری، محصول را به سبد خرید همین مرورگر اضافه کنی؛ دیگر نگو «نمی‌توانم مستقیم به سبد اضافه کنم».
-- فقط وقتی آخرین پیام مشتری صریحاً درخواست افزودن/گذاشتن محصول در سبد خرید دارد، در پایان پاسخ یک خط مخفی با قالب دقیق [BEE_CART_ADD:SKU1*QTY,SKU2*QTY] اضافه کن.
+- فقط وقتی آخرین پیام مشتری صریحاً درخواست افزودن/گذاشتن/خرید یا تأیید پیشنهاد فعلی را دارد، BEE_CART_ADD بساز.
 - QTY تعداد واقعی پیشنهادی همان محصول است؛ مثلاً [BEE_CART_ADD:BH21*1,P100*2,MG10*3].
 - داخل این marker فقط SKU دقیق محصولاتی را بگذار که در متن همان پاسخ صریحاً به‌عنوان ترکیب نهایی برای خرید لیست کرده‌ای و طبق کاتالوگ active و دارای stock>0 هستند.
 - اگر مشتری یک سیستم کامل/پکیج حفاظتی می‌خواهد، marker نباید فقط شامل پنل باشد؛ حداقل باید حسگر تشخیص نفوذ مناسب هم در ترکیب نهایی وجود داشته باشد.
 - اگر هنوز تعداد/نوع حسگر لازم مشخص نیست، marker نساز و اول سؤال کوتاه لازم را بپرس یا فرض پکیج پایه را صریحاً اعلام کن و تأیید بگیر.
 - وقتی مشتری بعد از مشخص‌شدن ترکیب می‌گوید «اضافه کن»، «همینو اضافه کن»، «اوکی اضافه کن»، «تأیید می‌کنم» یا عبارت روشن مشابه، تأیید دوباره نگیر؛ همان نوبت cart action را اجرا کن.
-- marker را برای توضیح، مقایسه، قیمت‌پرسیدن یا پیشنهاد عادی نساز.
-- marker یا توضیح داخلی آن را هرگز به‌صورت متن قابل مشاهده مثل «[ربط به سبد خرید: ...]» ننویس؛ فقط همان marker دقیق ماشینی را در انتهای پاسخ قرار بده.
+- برای توضیح، مقایسه یا قیمت‌پرسیدن بدون ترکیب نهایی هیچ marker نساز. برای «پیشنهاد عادیِ دقیق با اقلام و تعداد مشخص» فقط PLAN بساز، نه ADD.
+- marker یا توضیح داخلی آن را هرگز به‌صورت متن قابل مشاهده ننویس؛ فقط marker ماشینی را در انتهای پاسخ قرار بده.
 - اگر یک «ترکیب نهایی خرید» را در متن می‌نویسی و cart action می‌سازی، marker باید همهٔ اقلام همان ترکیب نهایی را با همان تعداد شامل شود. حذف پنل یا یکی از اجزای اصلی از marker ممنوع است.
 
 وضعیت فعلی سبد خرید مشتری:
 ${cartContext}
+
+پیشنهاد خرید فعلی که در turn قبلی به‌صورت ساختاریافته نگه داشته شده:
+${cartPlanContext}
 
 قواعد سبد فعلی:
 - فرض نکن سبد خالی است.
@@ -306,8 +315,12 @@ ${cartContext}
 - فعلاً cart action فقط افزودن انجام می‌دهد؛ درباره حذف یا جایگزینی ادعای انجام‌شدن نکن.
 
 سبک پاسخ:
-- لحن BEE باید گرم، مطمئن، خوش‌برخورد و مشتری‌پسند باشد؛ مثل یک کارشناس فروش حرفه‌ای که واقعاً می‌خواهد خرید درست انجام شود، نه یک فرم اداری یا ربات خشک.
-- فارسی طبیعی و محاوره‌ایِ محترمانه استفاده کن. جمله‌های کوتاه، روشن و روان بنویس و از تکرار سؤال یا عبارت‌های بوروکراتیک دوری کن.
+- لحن BEE باید گرم، صمیمیِ حرفه‌ای، مطمئن و مشتری‌پسند باشد؛ مثل یک کارشناس فروش خوش‌برخورد ایرانی، نه یک فرم اداری یا ربات خشک.
+- فارسی طبیعی و محاوره‌ایِ محترمانه استفاده کن. به‌جای «لطفاً اطلاعات را اعلام کنید» بگو «فقط تعداد در و پنجره رو بهم بگو، بقیه‌ش با من». از «نگران نباشید» و لحن بالا به پایین هم استفاده نکن.
+- برای مشتری مبتدی، اول نتیجه و پیشنهاد روشن را بگو و بعد دلیل کوتاه بده. تا وقتی واقعاً لازم نیست، پاسخ را با تیترهای رسمی و لیست‌های طولانی سنگین نکن.
+- اگر عددی را از حرف مشتری استخراج کردی، قبل از پاسخ جمع و تطبیقش را چک کن؛ مثلاً ۶ پنجره + ۲ در = ۸ مگنت، نه عدد دیگری.
+- هیچ‌وقت درباره تعداد زون، سیمی/بی‌سیم یا قابلیت پنل عبارتی مثل «چندین سنسور را کنترل می‌کند» ننویس مگر اینکه همان ادعا مستقیماً از مشخصات ساختاریافتهٔ دیتابیس پشتیبانی شود.
+- جمله‌های کوتاه، روشن و روان بنویس و از تکرار سؤال یا عبارت‌های بوروکراتیک دوری کن.
 - به‌جای «امکان انجام وجود ندارد» یا «ترکیب ناقص است» تا جای ممکن بگو «یه نکته مهم قبل از خرید داریم» و سریع راه‌حل بعدی را پیشنهاد بده.
 - وقتی مشتری آماده خرید است، بی‌دلیل او را بین تأییدهای پشت‌سرهم نگه ندار؛ اگر اطلاعات لازم کامل است، اقدام را انجام بده و نتیجه را شفاف بگو.
 - پاسخ را معمولاً کوتاه و روشن نگه دار؛ اگر مشتری مقایسه یا توضیح کامل خواست، جزئیات کافی بده.
@@ -365,6 +378,10 @@ interface ChatRequest {
     nameFa: string
     quantity: number
   }>
+  cartPlan?: Array<{
+    sku: string
+    quantity: number
+  }>
 }
 
 export async function POST(req: NextRequest) {
@@ -411,35 +428,150 @@ export async function POST(req: NextRequest) {
           .join('\n')
       : '- سبد خرید فعلاً خالی است.'
 
-    const systemPrompt = buildSystemPrompt(catalogContext, mentionedContext, cartContext)
-    const rawReply = await chat(body.messages, systemPrompt)
-    const { cleanText, items: requestedCartItems } = extractCartDirective(rawReply)
-
-    let validatedSelections = requestedCartItems
-      .map(({ sku, quantity }) => {
-        const product = catalogProducts.find(
-          (candidate) => canonicalizeSku(candidate.sku) === canonicalizeSku(sku),
-        )
-        if (!product || product.status !== 'active' || product.stock <= 0) return null
-
-        return {
-          product,
-          quantity: Math.min(quantity, product.stock, 20),
-        }
-      })
-      .filter((selection): selection is { product: ProductSnapshot; quantity: number } => !!selection)
-
     const latestUserText = lastUserMsg?.text ?? ''
     const enforceCompleteness = (
       !isExplicitPanelOnlyRequest(latestUserText)
       && shouldEnforceSystemCompleteness(systemIntentContext)
     )
 
-    // LLMs occasionally list the chosen panel in an earlier recommendation
-    // but omit it from a terse confirmation turn's hidden cart marker. For a
-    // full-system purchase, recover the most recent unambiguous panel choice
-    // from the current reply and recent conversation context.
-    if (enforceCompleteness) {
+    type ValidatedSelection = { product: ProductSnapshot; quantity: number }
+
+    const validateCartSelectionItems = (
+      items: readonly { sku: string; quantity: number }[],
+    ): ValidatedSelection[] => items
+      .map(({ sku, quantity }) => {
+        const product = catalogProducts.find(
+          (candidate) => canonicalizeSku(candidate.sku) === canonicalizeSku(sku),
+        )
+        if (!product || product.status !== 'active' || product.stock <= 0) return null
+        return {
+          product,
+          quantity: Math.min(Math.max(1, quantity), product.stock, 20),
+        }
+      })
+      .filter((selection): selection is ValidatedSelection => !!selection)
+
+    const assessValidatedSelections = async (selections: ValidatedSelection[]) => {
+      let specs: ProductSpecSnapshot[] = []
+      if (selections.length > 0) {
+        specs = await db
+          .select({
+            productId: productSpecs.productId,
+            key: productSpecs.keyFa,
+            value: productSpecs.valueFa,
+          })
+          .from(productSpecs)
+          .where(inArray(
+            productSpecs.productId,
+            selections.map(({ product }) => product.id),
+          ))
+          .orderBy(productSpecs.sortOrder)
+      }
+
+      const assessed = selections.map(({ product, quantity }) => ({
+        sku: product.sku,
+        name: product.name,
+        category: product.category,
+        categorySlug: product.categorySlug,
+        description: product.description,
+        specs: specs
+          .filter((spec) => spec.productId === product.id)
+          .map((spec) => ({ key: spec.key, value: spec.value })),
+        quantity,
+      }))
+
+      const assessment = assessSecurityCart(assessed)
+      const completenessGuard = enforceCompleteness
+        ? securityCartGuardMessage(assessment)
+        : null
+      const capacityGuard = enforceCompleteness && !completenessGuard
+        ? wiredZoneCapacityGuardMessage(assessed)
+        : null
+
+      return {
+        assessed,
+        guard: completenessGuard ?? capacityGuard,
+        capacityGuard,
+      }
+    }
+
+    const currentPlanItems = Array.isArray(body.cartPlan)
+      ? body.cartPlan.slice(0, 50)
+      : []
+    const currentPlanSelections = validateCartSelectionItems(currentPlanItems)
+    const cartPlanContext = currentPlanSelections.length > 0
+      ? currentPlanSelections
+          .map(({ product, quantity }) => `- ${product.sku} | ${product.name} | تعداد: ${quantity}`)
+          .join('\n')
+      : '- پیشنهاد ساختاریافته‌ای از turn قبلی نداریم.'
+
+    const plainPlanApproval = (
+      currentPlanSelections.length > 0
+      && isCartCommitIntent(latestUserText)
+      && !hasCartPlanModificationIntent(latestUserText)
+    )
+
+    // Deterministic commit path: once BEE has already proposed a validated
+    // package, a terse approval never goes back through the LLM. This prevents
+    // the model from dropping the panel or entering a completeness-guard loop.
+    if (plainPlanApproval) {
+      const { guard, capacityGuard } = await assessValidatedSelections(currentPlanSelections)
+      const reply = guard
+        ? capacityGuard
+          ? `${guard}\n\nترکیب قبلی رو همین‌طوری ثبت نمی‌کنم؛ اول باید ظرفیت پنل و نوع اتصال حسگرها درست با هم جور بشن.`
+          : `${guard}\n\nترکیب قبلی رو کامل می‌کنیم و بعد یکجا می‌فرستم توی سبد.`
+        : 'حتماً 👌 همون پکیجی که با هم جمع‌بندی کردیم رو برات به سبد خرید اضافه کردم. سبد رو باز می‌کنم که تعدادها رو یک نگاه بندازی؛ اگر خواستی چیزی کم‌وزیاد کنیم، من هستم.'
+
+      const cartItems = guard
+        ? []
+        : currentPlanSelections.map(({ product, quantity }) => ({
+            id: product.id,
+            slug: product.slug,
+            categorySlug: product.categorySlug ?? 'products',
+            nameFa: product.name,
+            sku: product.sku,
+            price: product.price,
+            comparePrice: product.comparePrice ?? undefined,
+            quantity,
+            placeholderFrom: '#DBEAFE',
+            placeholderTo: '#BFDBFE',
+          }))
+
+      await db.insert(chatMessages).values({
+        sessionId,
+        role: 'assistant',
+        content: reply,
+      })
+
+      return NextResponse.json({
+        message: reply,
+        session_id: sessionId,
+        cartItems,
+        cartPlan: guard ? currentPlanItems : [],
+        leadCaptured: false,
+      })
+    }
+
+    const systemPrompt = buildSystemPrompt(
+      catalogContext,
+      mentionedContext,
+      cartContext,
+      cartPlanContext,
+    )
+    const rawReply = await chat(body.messages, systemPrompt)
+    const signals = extractCartSignals(rawReply)
+    const cleanText = signals.cleanText
+
+    const directCommitIntent = isCartCommitIntent(latestUserText)
+    const requestedCartItems = directCommitIntent
+      ? (signals.addItems.length > 0 ? signals.addItems : signals.planItems)
+      : []
+
+    let validatedSelections = validateCartSelectionItems(requestedCartItems)
+
+    // Backwards-compatible recovery for direct buy requests where the model
+    // mentions a single panel in the reply but accidentally omits it from ADD.
+    if (enforceCompleteness && directCommitIntent && validatedSelections.length > 0) {
       const selectedHasPanel = validatedSelections.some(
         ({ product }) => classifySecurityProduct({
           sku: product.sku,
@@ -462,20 +594,13 @@ export async function POST(req: NextRequest) {
             description: product.description,
           }) === 'panel'
         ))
-
-        const recoveryTexts = [
-          cleanText,
-          ...body.messages
-            .slice(-10)
-            .reverse()
-            .map((message) => message.text),
-        ]
-
         const recoveredPanel = findLatestSingleMentionedProduct(
-          recoveryTexts,
+          [
+            cleanText,
+            ...body.messages.slice(-10).reverse().map((message) => message.text),
+          ],
           purchasablePanels,
         )
-
         if (recoveredPanel) {
           validatedSelections = [
             { product: recoveredPanel, quantity: 1 },
@@ -485,52 +610,36 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    let selectedSpecs: ProductSpecSnapshot[] = []
-    if (validatedSelections.length > 0) {
-      selectedSpecs = await db
-        .select({
-          productId: productSpecs.productId,
-          key: productSpecs.keyFa,
-          value: productSpecs.valueFa,
-        })
-        .from(productSpecs)
-        .where(inArray(
-          productSpecs.productId,
-          validatedSelections.map(({ product }) => product.id),
-        ))
-        .orderBy(productSpecs.sortOrder)
-    }
+    const cartActionAttempted = directCommitIntent && validatedSelections.length > 0
+    const actionAssessment = cartActionAttempted
+      ? await assessValidatedSelections(validatedSelections)
+      : { guard: null as string | null, capacityGuard: null as string | null }
+    const cartGuard = actionAssessment.guard
 
-    const assessedSelections = validatedSelections.map(({ product, quantity }) => ({
-      sku: product.sku,
-      name: product.name,
-      category: product.category,
-      categorySlug: product.categorySlug,
-      description: product.description,
-      specs: selectedSpecs
-        .filter((spec) => spec.productId === product.id)
-        .map((spec) => ({ key: spec.key, value: spec.value })),
-      quantity,
-    }))
-
-    const securityAssessment = assessSecurityCart(assessedSelections)
-    const cartActionAttempted = requestedCartItems.length > 0
-
-    const completenessGuard = enforceCompleteness && cartActionAttempted
-      ? securityCartGuardMessage(securityAssessment)
-      : null
-    const capacityGuard = enforceCompleteness && cartActionAttempted && !completenessGuard
-      ? wiredZoneCapacityGuardMessage(assessedSelections)
-      : null
-    const cartGuard = completenessGuard ?? capacityGuard
+    // Capture a structured proposal for the next turn. A rogue ADD marker on a
+    // non-purchase turn is demoted to PLAN instead of mutating the browser cart.
+    const proposedItems = signals.planItems.length > 0
+      ? signals.planItems
+      : !directCommitIntent
+        ? signals.addItems
+        : []
+    const proposedSelections = validateCartSelectionItems(proposedItems)
+    const proposalAssessment = proposedSelections.length > 0
+      ? await assessValidatedSelections(proposedSelections)
+      : { guard: null as string | null, capacityGuard: null as string | null }
+    const proposalGuard = proposalAssessment.guard
 
     const reply = cartGuard
-      ? capacityGuard
-        ? `${cartGuard}\n\nاگر موافقی، همین الان ترکیب رو طوری اصلاح می‌کنم که با ظرفیت پنل و نوع حسگرها جور باشه و خریدت بدون دردسر جلو بره.`
-        : `${cartGuard}\n\nاطلاعاتی که قبلاً گفتی پیشمه؛ فقط اگر یک مورد واقعاً کم باشه همون یک سؤال لازم رو می‌پرسم و بعد ترکیب رو کامل می‌کنم.`
-      : cartActionAttempted
-        ? `${cleanText}\n\n✅ موارد تأییدشده به سبد خرید اضافه شدند.`
-        : cleanText
+      ? actionAssessment.capacityGuard
+        ? `${cartGuard}\n\nاگر بخوای، ترکیب رو اصلاح می‌کنم تا با ظرفیت واقعی پنل و نوع حسگرها جور دربیاد و بعد یکجا وارد سبدش کنیم.`
+        : `${cartGuard}\n\nاطلاعاتی که قبلاً گفتی پیشمه؛ فقط همون موردی که واقعاً کمه رو مشخص می‌کنیم و بعد خرید رو جمع می‌کنیم.`
+      : proposalGuard
+        ? proposalAssessment.capacityGuard
+          ? `${proposalGuard}\n\nاین پکیج رو هنوز به‌عنوان پیشنهاد نهایی نگه نمی‌دارم؛ اول باید ترکیب حسگرها و ظرفیت پنل رو درست کنیم تا موقع نصب دردسر نداشته باشی.`
+          : `${proposalGuard}\n\nاین پیشنهاد هنوز کامل نیست؛ من تکمیلش می‌کنم و بعد بهت یک ترکیب جمع‌وجور و قابل خرید می‌دم.`
+        : cartActionAttempted
+          ? `${cleanText}\n\n✅ موارد تأییدشده به سبد خرید اضافه شدند.`
+          : cleanText
 
     const cartItems = !cartActionAttempted || cartGuard
       ? []
@@ -546,6 +655,15 @@ export async function POST(req: NextRequest) {
           placeholderFrom: '#DBEAFE',
           placeholderTo: '#BFDBFE',
         }))
+
+    const cartPlan = cartActionAttempted
+      ? []
+      : proposalGuard
+        ? []
+        : proposedSelections.map(({ product, quantity }) => ({
+            sku: product.sku,
+            quantity,
+          }))
 
     // ── 4. Persist assistant response ─────────────────────────────────────────
     await db.insert(chatMessages).values({
@@ -563,6 +681,7 @@ export async function POST(req: NextRequest) {
       message: reply,
       session_id: sessionId,
       cartItems,
+      cartPlan,
       leadCaptured,
       phone: leadCaptured ? phoneMatch![0] : undefined,
     })
