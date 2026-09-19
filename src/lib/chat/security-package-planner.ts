@@ -344,18 +344,25 @@ export function buildDeterministicSecurityPackage(
           && product.stock >= openingCount
         ))
       : []
-    const wirelessMotions = available.filter((product) => (
-      classifySecurityProduct(product) === 'motion_sensor'
-      && isWirelessSecurityProduct(product)
-      && product.stock >= Math.max(1, needs.motionAreas ?? 1)
-    ))
-
     const openingSensor = openingCount > 0
       ? preferredProduct(wirelessOpenings, 'MG11')
       : null
-    const motionSensor = preferredProduct(wirelessMotions, '')
 
-    if (!motionSensor) {
+    if (openingCount > 0 && !openingSensor) {
+      return {
+        status: 'unsupported',
+        needs,
+        message: 'برای در و پنجره‌ها حسگر بی‌سیمِ موجود و قابل‌تأیید با تعداد کافی پیدا نکردم؛ پکیج کاملاً بی‌سیم رو ناقص نمی‌بندم.',
+      }
+    }
+
+    // First verify that the catalog actually has a wireless motion detector.
+    // If it does not, there is no point asking the customer how many are needed.
+    const anyWirelessMotion = available.filter((product) => (
+      classifySecurityProduct(product) === 'motion_sensor'
+      && isWirelessSecurityProduct(product)
+    ))
+    if (anyWirelessMotion.length === 0) {
       const openingFact = openingSensor
         ? `برای در و پنجره‌ها ${openingSensor.sku} بی‌سیم موجوده، `
         : ''
@@ -366,7 +373,41 @@ export function buildDeterministicSecurityPackage(
       }
     }
 
-    const motionCount = Math.max(1, needs.motionAreas ?? 1)
+    if (needs.motionAreas === null) {
+      return {
+        status: 'needs_input',
+        needs,
+        questionKey: 'motion_areas',
+        question: 'برای چشمی‌های بی‌سیم فقط بگو چند فضای اصلی مثل پذیرایی، راهرو یا طبقه رو می‌خوای پوشش بدی؟ یک عدد کافیه.',
+      }
+    }
+
+    const motionCount = Math.max(0, needs.motionAreas)
+    const wirelessMotions = available.filter((product) => (
+      classifySecurityProduct(product) === 'motion_sensor'
+      && isWirelessSecurityProduct(product)
+      && product.stock >= motionCount
+    ))
+    const motionSensor = motionCount > 0
+      ? preferredProduct(wirelessMotions, '')
+      : null
+
+    if (motionCount > 0 && !motionSensor) {
+      return {
+        status: 'unsupported',
+        needs,
+        message: 'تعداد چشمی بی‌سیم موردنیاز با موجودی فعلی کاتالوگ جور درنمیاد؛ تعداد رو حدسی کم نمی‌کنم.',
+      }
+    }
+
+    if (openingCount === 0 && motionCount === 0) {
+      return {
+        status: 'unsupported',
+        needs,
+        message: 'برای پکیج بی‌سیم حداقل یک نقطه حفاظتی باید مشخص بشه.',
+      }
+    }
+
     const detectorCount = openingCount + motionCount
     const panelCandidates = available
       .filter((product) => classifySecurityProduct(product) === 'panel')
@@ -399,7 +440,7 @@ export function buildDeterministicSecurityPackage(
       [
         { product: selectedPanel.product, quantity: 1 },
         ...(openingSensor ? [{ product: openingSensor, quantity: openingCount }] : []),
-        { product: motionSensor, quantity: motionCount },
+        ...(motionSensor ? [{ product: motionSensor, quantity: motionCount }] : []),
       ],
       0,
       detectorCount,
