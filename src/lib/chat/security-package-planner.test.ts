@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyPackageQuestionAnswer,
+  applyPackageRequirementAdjustment,
   buildDeterministicSecurityPackage,
   extractSecurityNeeds,
   isPackageRecommendationIntent,
@@ -133,6 +134,22 @@ describe('deterministic security package planner', () => {
 
     expect(answered.handled).toBe(true)
     expect(answered.needs.motionAreas).toBe(2)
+  })
+
+  it('applies relative changes against persisted requirements instead of resetting totals', () => {
+    const current = extractSecurityNeeds([
+      '۳ تا پنجره، ۲ تا در ورودی و ۲ فضای اصلی دارم',
+    ])
+
+    expect(
+      applyPackageRequirementAdjustment(current, 'یه چشمی دیگه اضافه کن').needs.motionAreas,
+    ).toBe(3)
+    expect(
+      applyPackageRequirementAdjustment(current, 'یک پنجره کم کن').needs.windows,
+    ).toBe(2)
+    expect(
+      applyPackageRequirementAdjustment(current, 'دو تا در دیگه اضافه کن').needs.doors,
+    ).toBe(4)
   })
 
   it('does not split one bare number into both door and window counts', () => {
