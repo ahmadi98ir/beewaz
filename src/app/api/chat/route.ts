@@ -12,6 +12,7 @@ import {
   hasCartPlanModificationIntent,
   inferCartPlanFromAssistantText,
   isCartCommitIntent,
+  isExplicitCartPurchaseIntent,
   findMentionedProducts,
   productAvailabilityLabel,
   type GroundedProduct,
@@ -455,6 +456,25 @@ export async function POST(req: NextRequest) {
       })
       .filter((selection): selection is ValidatedSelection => !!selection)
 
+    const mergeCartSelectionItems = (
+      ...groups: ReadonlyArray<readonly { sku: string; quantity: number }[]>
+    ): Array<{ sku: string; quantity: number }> => {
+      const merged = new Map<string, { sku: string; quantity: number }>()
+
+      for (const group of groups) {
+        for (const item of group) {
+          const key = canonicalizeSku(item.sku)
+          if (!key || merged.has(key)) continue
+          merged.set(key, {
+            sku: item.sku,
+            quantity: Math.min(20, Math.max(1, item.quantity || 1)),
+          })
+        }
+      }
+
+      return Array.from(merged.values())
+    }
+
     const assessValidatedSelections = async (selections: ValidatedSelection[]) => {
       let specs: ProductSpecSnapshot[] = []
       if (selections.length > 0) {
@@ -517,14 +537,19 @@ export async function POST(req: NextRequest) {
       : recoveredPlanItems
 
     const currentPlanSelections = validateCartSelectionItems(currentPlanItems)
-    const cartPlanContext = currentPlanSelections.length > 0
+    const currentPlanAssessment = currentPlanSelections.length > 0
+      ? await assessValidatedSelections(currentPlanSelections)
+      : { guard: null as string | null, capacityGuard: null as string | null }
+    const currentPlanReady = currentPlanSelections.length > 0 && !currentPlanAssessment.guard
+
+    const cartPlanContext = currentPlanReady
       ? currentPlanSelections
           .map(({ product, quantity }) => `- ${product.sku} | ${product.name} | تعداد: ${quantity}`)
           .join('\n')
-      : '- پیشنهاد ساختاریافته‌ای از turn قبلی نداریم.'
+      : '- پیشنهاد ساختاریافتهٔ معتبر و آماده خرید از turn قبلی نداریم.'
 
     const plainPlanApproval = (
-      currentPlanSelections.length > 0
+      currentPlanReady
       && isCartCommitIntent(latestUserText)
       && !hasCartPlanModificationIntent(latestUserText)
     )
@@ -533,16 +558,9 @@ export async function POST(req: NextRequest) {
     // package, a terse approval never goes back through the LLM. This prevents
     // the model from dropping the panel or entering a completeness-guard loop.
     if (plainPlanApproval) {
-      const { guard, capacityGuard } = await assessValidatedSelections(currentPlanSelections)
-      const reply = guard
-        ? capacityGuard
-          ? `${guard}\n\nترکیب قبلی رو همین‌طوری ثبت نمی‌کنم؛ اول باید ظرفیت پنل و نوع اتصال حسگرها درست با هم جور بشن.`
-          : `${guard}\n\nترکیب قبلی رو کامل می‌کنیم و بعد یکجا می‌فرستم توی سبد.`
-        : 'حتماً 👌 همون پکیجی که با هم جمع‌بندی کردیم رو برات به سبد خرید اضافه کردم. سبد رو باز می‌کنم که تعدادها رو یک نگاه بندازی؛ اگر خواستی چیزی کم‌وزیاد کنیم، من هستم.'
+      const reply = 'حتماً 👌 همون پکیجی که با هم جمع‌بندی کردیم رو برات به سبد خرید اضافه کردم. سبد رو باز می‌کنم که تعدادها رو یک نگاه بندازی؛ اگر خواستی چیزی کم‌وزیاد کنیم، من هستم.'
 
-      const cartItems = guard
-        ? []
-        : currentPlanSelections.map(({ product, quantity }) => ({
+      const cartItems = currentPlanSelections.map(({ product, quantity }) => ({
             id: product.id,
             slug: product.slug,
             categorySlug: product.categorySlug ?? 'products',
@@ -565,7 +583,7 @@ export async function POST(req: NextRequest) {
         message: reply,
         session_id: sessionId,
         cartItems,
-        cartPlan: guard ? currentPlanItems : [],
+        cartPlan: [],
         leadCaptured: false,
       })
     }
@@ -580,14 +598,14 @@ export async function POST(req: NextRequest) {
     const signals = extractCartSignals(rawReply)
     const cleanText = signals.cleanText
 
-    const directCommitIntent = isCartCommitIntent(latestUserText)
+    const directCommitIntent = isExplicitCartPurchaseIntent(latestUserText)
     const inferredReplyItems = inferCartPlanFromAssistantText(cleanText, catalogProducts)
     const requestedCartItems = directCommitIntent
-      ? signals.addItems.length > 0
-        ? signals.addItems
-        : signals.planItems.length > 0
-          ? signals.planItems
-          : inferredReplyItems
+      ? mergeCartSelectionItems(
+          signals.addItems,
+          signals.planItems,
+          inferredReplyItems,
+        )
       : []
 
     let validatedSelections = validateCartSelectionItems(requestedCartItems)
@@ -641,30 +659,29 @@ export async function POST(req: NextRequest) {
 
     // Capture a structured proposal for the next turn. A rogue ADD marker on a
     // non-purchase turn is demoted to PLAN instead of mutating the browser cart.
-    const proposedItems = signals.planItems.length > 0
-      ? signals.planItems
-      : !directCommitIntent
-        ? signals.addItems.length > 0
-          ? signals.addItems
-          : inferredReplyItems
-        : []
+    const proposedItems = !directCommitIntent
+      ? mergeCartSelectionItems(
+          signals.planItems,
+          signals.addItems,
+          inferredReplyItems,
+        )
+      : []
     const proposedSelections = validateCartSelectionItems(proposedItems)
     const proposalAssessment = proposedSelections.length > 0
       ? await assessValidatedSelections(proposedSelections)
       : { guard: null as string | null, capacityGuard: null as string | null }
     const proposalGuard = proposalAssessment.guard
 
+    // Guards may block a real cart mutation, but they must never hijack an
+    // ordinary recommendation turn. An invalid proposed plan is simply not
+    // persisted; the customer still sees BEE's actual recommendation.
     const reply = cartGuard
       ? actionAssessment.capacityGuard
         ? `${cartGuard}\n\nاگر بخوای، ترکیب رو اصلاح می‌کنم تا با ظرفیت واقعی پنل و نوع حسگرها جور دربیاد و بعد یکجا وارد سبدش کنیم.`
-        : `${cartGuard}\n\nاطلاعاتی که قبلاً گفتی پیشمه؛ فقط همون موردی که واقعاً کمه رو مشخص می‌کنیم و بعد خرید رو جمع می‌کنیم.`
-      : proposalGuard
-        ? proposalAssessment.capacityGuard
-          ? `${proposalGuard}\n\nاین پکیج رو هنوز به‌عنوان پیشنهاد نهایی نگه نمی‌دارم؛ اول باید ترکیب حسگرها و ظرفیت پنل رو درست کنیم تا موقع نصب دردسر نداشته باشی.`
-          : `${proposalGuard}\n\nاین پیشنهاد هنوز کامل نیست؛ من تکمیلش می‌کنم و بعد بهت یک ترکیب جمع‌وجور و قابل خرید می‌دم.`
-        : cartActionAttempted
-          ? `${cleanText}\n\n✅ موارد تأییدشده به سبد خرید اضافه شدند.`
-          : cleanText
+        : `${cartGuard}\n\nفقط همون یک موردی که واقعاً برای خرید کمه رو مشخص می‌کنیم و بعد یکجا جمعش می‌کنم.`
+      : cartActionAttempted
+        ? `${cleanText}\n\n✅ موارد تأییدشده به سبد خرید اضافه شدند.`
+        : cleanText
 
     const cartItems = !cartActionAttempted || cartGuard
       ? []

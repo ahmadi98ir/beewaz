@@ -308,6 +308,27 @@ export function inferCartPlanFromAssistantText<T extends CartPlanProduct>(
   return inferred
 }
 
+export function isExplicitCartPurchaseIntent(text: string): boolean {
+  const normalized = normalizeDigits(text)
+    .replace(/ي/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .replace(/[\u200c\u200f\u202a-\u202e]/g, ' ')
+    .toLocaleLowerCase('fa-IR')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!normalized) return false
+
+  // Explicit purchase/cart verbs only. Generic acknowledgements such as
+  // «اوکی» and «باشه» are intentionally excluded and may commit only when a
+  // validated pending plan already exists.
+  return (
+    /(به\s*سبد|سبد.*(?:اضافه|نهایی)|(?:اضافه|بذار|بزار|قرار).*سبد)/i.test(normalized)
+    || /(می\s*خوام\s*بخر|میخوام\s*بخر|بخرش|بخرمش|خریدش\s*کن|نهایی\s*کن)/i.test(normalized)
+    || /(?:همین(?:و|\s*رو|\s*را)?|همون|همان(?:\s*رو|\s*را)?)[^\n]{0,64}(?:بذار|بزار|بردار|می\s*برم|میبرم)/i.test(normalized)
+  )
+}
+
 export function isCartCommitIntent(text: string): boolean {
   const normalized = normalizeDigits(text)
     .replace(/ي/g, 'ی')
