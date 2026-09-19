@@ -178,6 +178,19 @@ export function isPackageRecommendationIntent(text: string): boolean {
   return /(پیشنهاد|چی\s*(?:بگیر|بخر|پیشنهاد)|خودت|مناسب|کامل|پکیج|سیستم|راهنما)/i.test(normalized)
 }
 
+
+export function isPackageRequirementsUpdate(text: string): boolean {
+  const normalized = normalizeText(text)
+  const numberToken = '(?:\\d{1,2}|یک|یه|دو|سه|چهار|پنج|شش|هفت|هشت|نه|ده|یازده|دوازده|سیزده|چهارده|پانزده|شانزده|هفده|هجده|نوزده|بیست)'
+  const hasOpeningCount = new RegExp(
+    numberToken + '\\s*(?:تا|عدد)?\\s*(?:پنجره|(?:در|درب)(?:\\s*ورودی)?)',
+    'i',
+  ).test(normalized)
+  const changesWiring = /(بی\s*سیم|بیسیم|سیمی|wireless|wired)/i.test(normalized)
+
+  return hasOpeningCount || changesWiring
+}
+
 function activeProducts(
   products: readonly DeterministicPackageProduct[],
 ): DeterministicPackageProduct[] {
