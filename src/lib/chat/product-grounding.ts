@@ -53,6 +53,24 @@ export function findMentionedProducts<T extends GroundedProduct>(
   })
 }
 
+
+/**
+ * Returns the first unambiguous product reference from texts ordered newest
+ * first. This is useful for recovering a previously selected product when a
+ * terse follow-up such as «تأیید می‌کنم» no longer names the SKU.
+ */
+export function findLatestSingleMentionedProduct<T extends GroundedProduct>(
+  textsNewestFirst: readonly string[],
+  products: readonly T[],
+): T | null {
+  for (const text of textsNewestFirst) {
+    const matches = findMentionedProducts(text, products)
+    if (matches.length === 1) return matches[0]!
+  }
+
+  return null
+}
+
 export function productAvailabilityLabel(product: GroundedProduct): string {
   if (product.status === 'out_of_stock') return 'ناموجود'
   if (product.stock <= 0) return 'فعال در سایت، اما موجودی انبار صفر'
