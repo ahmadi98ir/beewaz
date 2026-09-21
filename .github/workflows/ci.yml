@@ -16,7 +16,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -28,6 +28,12 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      - name: Production build check
+        env:
+          NEXT_PUBLIC_APP_URL: https://beewaz.ir
+          NEXT_PUBLIC_BUILD_SHA: ${{ github.sha }}
+        run: npm run build
+
   e2e:
     runs-on: ubuntu-latest
     needs: test
@@ -38,7 +44,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -47,7 +53,7 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Run E2E tests against production
+      - name: Run smoke tests against currently deployed production
         env:
           E2E_BASE_URL: https://beewaz.ir
         run: npm run test:e2e
