@@ -107,6 +107,13 @@ describe('product grounding helpers', () => {
     ])
   })
 
+  it('does not truncate legitimate quantities above twenty', () => {
+    const parsed = extractCartDirective('[BEE_CART_ADD:MG10*25]')
+    expect(parsed.items).toEqual([
+      { sku: 'MG10', quantity: 25 },
+    ])
+  })
+
   it('parses quantities and merges duplicate SKUs', () => {
     const parsed = extractCartDirective(
       '[BEE_CART_ADD:BH21*1,P100*2,MG10*3,P100*1]',
