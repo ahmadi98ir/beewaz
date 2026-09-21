@@ -19,36 +19,65 @@ export interface SecurityCatalogProduct {
   specs?: Array<{ key: string; value: string }>
 }
 
-function normalizedProductText(product: SecurityCatalogProduct): string {
+function normalizedIdentityText(product: SecurityCatalogProduct): string {
   return normalizeProductReferenceText([
     product.sku,
     product.name,
     product.category ?? '',
     product.categorySlug ?? '',
-    product.description ?? '',
   ].join(' '))
+}
+
+function normalizedDescriptionText(product: SecurityCatalogProduct): string {
+  return normalizeProductReferenceText(product.description ?? '')
 }
 
 export function classifySecurityProduct(
   product: SecurityCatalogProduct,
 ): SecurityProductRole {
-  const text = normalizedProductText(product)
+  // Classification must be driven by product identity (SKU/name/category), not
+  // arbitrary words appearing in marketing descriptions. A shock sensor may
+  // mention «درب» in its description and a panel may mention «سنسور» without
+  // changing what the product actually is.
+  const identity = normalizedIdentityText(product)
+  const description = normalizedDescriptionText(product)
 
-  if (
-    /(پنل|دزدگیر|centralwarning|centralalarm|alarmpanel)/.test(text)
-    && !/(سنسور|حسگر|چشمی|مگنت|آژیر|بلندگو|ریموت|آنتن)/.test(text)
-  ) {
+  if (/(پنل|دزدگیر|centralwarning|centralalarm|alarmpanel)/.test(identity)) {
     return 'panel'
   }
 
-  if (/(چشمی|حرکتی|motionsensor|pir)/.test(text)) return 'motion_sensor'
-  if (/(مگنت|درب|پنجره|openingsensor|magnet)/.test(text)) return 'opening_sensor'
-  if (/(آژیر|بلندگو|siren|speaker|piezo|پیزو)/.test(text)) return 'audible_alarm'
-  if (/(منبعتغذیه|باتری|power|battery|psu)/.test(text)) return 'power'
-  if (/(ریموت|کیپد|کنترل|remote|keypad|control)/.test(text)) return 'control'
-  if (/(آنتن|تقویت|antenna|booster)/.test(text)) return 'booster'
+  if (/(چشمی|حرکتی|motionsensor|pir)/.test(identity)) return 'motion_sensor'
+  if (/(مگنت|openingsensor|magnet|doorcontact|windowcontact)/.test(identity)) return 'opening_sensor'
+  if (/(آژیر|بلندگو|siren|speaker|piezo|پیزو)/.test(identity)) return 'audible_alarm'
+  if (/(منبعتغذیه|باتری|power|battery|psu)/.test(identity)) return 'power'
+  if (/(ریموت|کیپد|کنترل|remote|keypad|control)/.test(identity)) return 'control'
+  if (/(آنتن|تقویت|antenna|booster)/.test(identity)) return 'booster'
+
+  // Description is only a fallback for products whose identity is genuinely
+  // generic. Keep the fallback narrow to avoid cross-role contamination.
+  if (/(motionsensor|pir|حسگرحرکتی|چشمیحرکتی)/.test(description)) return 'motion_sensor'
+  if (/(مگنت|openingsensor|magnet|doorcontact|windowcontact)/.test(description)) return 'opening_sensor'
+  if (/(siren|speaker|piezo|پیزو|آژیر|بلندگو)/.test(description)) return 'audible_alarm'
 
   return 'other'
+}
+
+export type SecurityConnectionType = 'wired' | 'wireless' | 'unknown'
+
+export function getSecurityProductConnectionType(
+  product: SecurityCatalogProduct,
+): SecurityConnectionType {
+  const identity = normalizedIdentityText(product)
+  const description = normalizedDescriptionText(product)
+
+  const detect = (text: string): SecurityConnectionType => {
+    if (/(بیسیم|wireless)/.test(text)) return 'wireless'
+    if (/(سیمی|wired)/.test(text)) return 'wired'
+    return 'unknown'
+  }
+
+  const identityType = detect(identity)
+  return identityType !== 'unknown' ? identityType : detect(description)
 }
 
 export interface CartSelectionProduct extends SecurityCatalogProduct {
@@ -166,22 +195,76 @@ function toPersianDigits(value: number): string {
 }
 
 export function isWiredSecurityProduct(product: SecurityCatalogProduct): boolean {
-  const text = normalizedProductText(product)
-  return /(سیمی|wired)/.test(text) && !/(بیسیم|wireless)/.test(text)
+  return getSecurityProductConnectionType(product) === 'wired'
+}
+
+export function isWirelessSecurityProduct(product: SecurityCatalogProduct): boolean {
+  return getSecurityProductConnectionType(product) === 'wireless'
+}
+
+function findZoneCapacity(
+  text: string,
+  connection: 'wired' | 'wireless',
+): number | null {
+  const normalized = toAsciiDigits(text)
+    .replace(/ي/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .replace(/[\u200c\u200f\u202a-\u202e]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  const label = connection === 'wired'
+    ? '(?:سیمی|با\\s*سیم)'
+    : '(?:بی\\s*سیم|بیسیم|wireless)'
+
+  const beforeLabel = normalized.match(
+    new RegExp('(\\d+)\\s*(?:عدد\\s*)?زون(?:\\s*های?)?\\s*' + label, 'i'),
+  )
+  if (beforeLabel) return Number.parseInt(beforeLabel[1]!, 10)
+
+  const afterLabel = normalized.match(
+    new RegExp('زون(?:\\s*های?)?\\s*' + label + '\\s*[:：\\-]?\\s*(\\d+)', 'i'),
+  )
+  if (afterLabel) return Number.parseInt(afterLabel[1]!, 10)
+
+  return null
+}
+
+function getPanelZoneCapacity(
+  panel: SecurityCatalogProduct,
+  connection: 'wired' | 'wireless',
+): number | null {
+  for (const spec of panel.specs ?? []) {
+    const explicit = findZoneCapacity(`${spec.key} ${spec.value}`, connection)
+    if (explicit !== null) return explicit
+
+    const key = normalizeProductReferenceText(spec.key)
+    const wantsWireless = connection === 'wireless'
+    const keyMatches = wantsWireless
+      ? key.includes('زون') && key.includes('بیسیم')
+      : key.includes('زون') && key.includes('سیمی') && !key.includes('بیسیم')
+    if (!keyMatches) continue
+
+    const fallback = toAsciiDigits(spec.value).match(/\d+/)
+    if (fallback) return Number.parseInt(fallback[0], 10)
+  }
+
+  return findZoneCapacity(
+    [panel.name, panel.description ?? ''].join(' '),
+    connection,
+  )
 }
 
 export function getPanelWiredZoneCapacity(
   panel: SecurityCatalogProduct,
 ): number | null {
-  for (const spec of panel.specs ?? []) {
-    const key = normalizeProductReferenceText(spec.key)
-    if (!key.includes('زون') || !key.includes('سیمی') || key.includes('بیسیم')) continue
+  return getPanelZoneCapacity(panel, 'wired')
+}
 
-    const match = toAsciiDigits(spec.value).match(/\d+/)
-    if (match) return Number.parseInt(match[0], 10)
-  }
-
-  return null
+export function getPanelWirelessZoneCapacity(
+  panel: SecurityCatalogProduct,
+): number | null {
+  return getPanelZoneCapacity(panel, 'wireless')
 }
 
 export function wiredZoneCapacityGuardMessage(
@@ -208,6 +291,30 @@ export function wiredZoneCapacityGuardMessage(
   return `یه نکته مهم قبل از خرید داریم: ترکیب فعلی ${toPersianDigits(wiredDetectorCount)} حسگر سیمی دارد، ولی برای پنل ${panel.sku} فقط ${toPersianDigits(capacity)} زون سیمی در مشخصات ثبت شده. نمی‌خوام چیزی بخری که موقع نصب دردسر درست کنه؛ باید یا زون‌ها با نظر نصاب گروه‌بندی شوند، یا بخشی از حسگرها بی‌سیم شوند، یا پنل مناسب‌تری انتخاب کنیم. فعلاً این ترکیب را به‌عنوان پکیج آماده نصب وارد سبد نمی‌کنم.`
 }
 
+
+export function wirelessZoneCapacityGuardMessage(
+  products: readonly CartSelectionProduct[],
+): string | null {
+  const panel = products.find(
+    (product) => product.quantity > 0 && classifySecurityProduct(product) === 'panel',
+  )
+  if (!panel) return null
+
+  const capacity = getPanelWirelessZoneCapacity(panel)
+  if (capacity === null) return null
+
+  const wirelessDetectorCount = products.reduce((sum, product) => {
+    const role = classifySecurityProduct(product)
+    const detector = role === 'motion_sensor' || role === 'opening_sensor'
+    return detector && isWirelessSecurityProduct(product)
+      ? sum + Math.max(0, product.quantity)
+      : sum
+  }, 0)
+
+  if (wirelessDetectorCount <= capacity) return null
+
+  return `یه نکته مهم قبل از خرید داریم: ترکیب فعلی ${toPersianDigits(wirelessDetectorCount)} حسگر بی‌سیم دارد، ولی برای پنل ${panel.sku} فقط ${toPersianDigits(capacity)} زون بی‌سیم در مشخصات ثبت شده. برای جلوگیری از ترکیب ناسازگار، این پکیج را وارد سبد نمی‌کنم تا تعداد حسگرها یا پنل اصلاح شود.`
+}
 
 export function hasSecurityRole(
   products: readonly CartSelectionProduct[],

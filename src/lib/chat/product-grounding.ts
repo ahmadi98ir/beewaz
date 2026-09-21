@@ -165,8 +165,8 @@ function parseCartPayloads(payloads: readonly string[]): CartDirectiveItem[] {
     if (!sku) continue
 
     const rawQuantity = parsed[2] ? Number.parseInt(parsed[2], 10) : 1
-    const quantity = Math.min(20, Math.max(1, Number.isFinite(rawQuantity) ? rawQuantity : 1))
-    quantities.set(sku, Math.min(20, (quantities.get(sku) ?? 0) + quantity))
+    const quantity = Math.min(999, Math.max(1, Number.isFinite(rawQuantity) ? rawQuantity : 1))
+    quantities.set(sku, Math.min(999, (quantities.get(sku) ?? 0) + quantity))
   }
 
   return Array.from(quantities, ([sku, quantity]) => ({ sku, quantity }))
@@ -296,7 +296,7 @@ export function inferCartPlanFromAssistantText<T extends CartPlanProduct>(
 
     const panelLike = /^BH\d+$/i.test(sku)
     const quantity = explicitQty
-      ? Math.min(20, Math.max(1, Number.parseInt(explicitQty, 10)))
+      ? Math.min(999, Math.max(1, Number.parseInt(explicitQty, 10)))
       : panelLike
         ? 1
         : null
@@ -306,6 +306,32 @@ export function inferCartPlanFromAssistantText<T extends CartPlanProduct>(
   }
 
   return inferred
+}
+
+export function inferSingleExplicitUserCartItem<T extends GroundedProduct>(
+  text: string,
+  products: readonly T[],
+): CartDirectiveItem | null {
+  const matches = findMentionedProducts(text, products)
+  if (matches.length !== 1) return null
+
+  const normalized = normalizeDigits(text)
+    .replace(/ي/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .replace(/[\u200c\u200f\u202a-\u202e]/g, ' ')
+    .toLocaleLowerCase('fa-IR')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  const explicitQty = normalized.match(/(\d{1,3})\s*(?:عدد|تا)(?:\s|$)/i)?.[1]
+  const quantity = explicitQty
+    ? Math.min(999, Math.max(1, Number.parseInt(explicitQty, 10)))
+    : 1
+
+  return {
+    sku: canonicalizeSku(matches[0]!.sku),
+    quantity,
+  }
 }
 
 export function isExplicitCartPurchaseIntent(text: string): boolean {

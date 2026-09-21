@@ -19,6 +19,8 @@ type CartStore = {
   isOpen: boolean
 
   addItem: (item: Omit<CartItem, 'quantity'>) => void
+  addItemQuantity: (item: Omit<CartItem, 'quantity'>, quantity: number) => void
+  ensureItemQuantity: (item: Omit<CartItem, 'quantity'>, quantity: number) => void
   removeItem: (id: string) => void
   updateQuantity: (id: string, quantity: number) => void
   clearCart: () => void
@@ -43,6 +45,40 @@ export const useCart = create<CartStore>()(
             }
           }
           return { items: [...state.items, { ...newItem, quantity: 1 }] }
+        })
+      },
+
+      addItemQuantity: (newItem, requestedQuantity) => {
+        const quantity = Math.max(1, Math.min(999, Math.trunc(requestedQuantity || 1)))
+        set((state) => {
+          const existing = state.items.find((i) => i.id === newItem.id)
+          if (existing) {
+            return {
+              items: state.items.map((i) =>
+                i.id === newItem.id
+                  ? { ...i, ...newItem, quantity: i.quantity + quantity }
+                  : i,
+              ),
+            }
+          }
+          return { items: [...state.items, { ...newItem, quantity }] }
+        })
+      },
+
+      ensureItemQuantity: (newItem, requestedQuantity) => {
+        const quantity = Math.max(1, Math.min(999, Math.trunc(requestedQuantity || 1)))
+        set((state) => {
+          const existing = state.items.find((i) => i.id === newItem.id)
+          if (existing) {
+            return {
+              items: state.items.map((i) =>
+                i.id === newItem.id
+                  ? { ...i, ...newItem, quantity: Math.max(i.quantity, quantity) }
+                  : i,
+              ),
+            }
+          }
+          return { items: [...state.items, { ...newItem, quantity }] }
         })
       },
 
