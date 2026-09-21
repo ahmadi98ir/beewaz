@@ -8,6 +8,7 @@ import {
   securityCartGuardMessage,
   shouldEnforceSystemCompleteness,
   wiredZoneCapacityGuardMessage,
+  wirelessZoneCapacityGuardMessage,
 } from './security-system-builder'
 
 describe('security system builder', () => {
@@ -182,6 +183,27 @@ describe('security system builder', () => {
 
     expect(message).toContain('۹ حسگر سیمی')
     expect(message).toContain('۵ زون سیمی')
+  })
+
+  it('blocks wireless detectors that exceed the panel registered wireless zones', () => {
+    const message = wirelessZoneCapacityGuardMessage([
+      {
+        sku: 'BH20',
+        name: 'دستگاه دزدگیر BH20 بیواز',
+        category: 'پنل های مرکزی هشدار',
+        description: 'دارای 5 زون سیمی و 20 زون بی‌سیم',
+        quantity: 1,
+      },
+      {
+        sku: 'MG11',
+        name: 'مگنت بی‌سیم بیواز MG11',
+        description: 'مگنت بی‌سیم',
+        quantity: 21,
+      },
+    ])
+
+    expect(message).toContain('۲۱ حسگر بی‌سیم')
+    expect(message).toContain('۲۰ زون بی‌سیم')
   })
 
   it('allows an independently zoned layout that fits panel wired capacity', () => {
