@@ -296,7 +296,7 @@ export function inferCartPlanFromAssistantText<T extends CartPlanProduct>(
 
     const panelLike = /^BH\d+$/i.test(sku)
     const quantity = explicitQty
-      ? Math.min(20, Math.max(1, Number.parseInt(explicitQty, 10)))
+      ? Math.min(999, Math.max(1, Number.parseInt(explicitQty, 10)))
       : panelLike
         ? 1
         : null
