@@ -26,6 +26,7 @@ import {
   securityCartGuardMessage,
   shouldEnforceSystemCompleteness,
   wiredZoneCapacityGuardMessage,
+  wirelessZoneCapacityGuardMessage,
 } from '@/lib/chat/security-system-builder'
 import {
   buildDeterministicSecurityPackage,
@@ -526,9 +527,13 @@ export async function POST(req: NextRequest) {
       const completenessGuard = enforceCompleteness
         ? securityCartGuardMessage(assessment)
         : null
-      const capacityGuard = enforceCompleteness && !completenessGuard
+      const wiredCapacityGuard = enforceCompleteness && !completenessGuard
         ? wiredZoneCapacityGuardMessage(assessed)
         : null
+      const wirelessCapacityGuard = enforceCompleteness && !completenessGuard && !wiredCapacityGuard
+        ? wirelessZoneCapacityGuardMessage(assessed)
+        : null
+      const capacityGuard = wiredCapacityGuard ?? wirelessCapacityGuard
 
       return {
         assessed,
