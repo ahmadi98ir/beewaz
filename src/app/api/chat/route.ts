@@ -11,6 +11,7 @@ import {
   findLatestSingleMentionedProduct,
   hasCartPlanModificationIntent,
   inferCartPlanFromAssistantText,
+  inferSingleExplicitUserCartItem,
   isCartCommitIntent,
   isExplicitCartPurchaseIntent,
   findMentionedProducts,
@@ -664,6 +665,83 @@ export async function POST(req: NextRequest) {
         session_id: sessionId,
         cartItems,
         cartMode: 'ensure',
+        cartPlan: [],
+        leadCaptured: false,
+      })
+    }
+
+
+    // Deterministic direct-product purchase path. A customer explicitly naming
+    // one SKU should not depend on the model emitting a hidden cart marker.
+    const directUserCartItem = isExplicitCartPurchaseIntent(latestUserText)
+      ? inferSingleExplicitUserCartItem(latestUserText, catalogProducts)
+      : null
+
+    if (directUserCartItem && !isSecurityPackageConversation([latestUserText])) {
+      const requestedProduct = catalogProducts.find(
+        (product) => canonicalizeSku(product.sku) === canonicalizeSku(directUserCartItem.sku),
+      )
+
+      if (
+        !requestedProduct
+        || requestedProduct.status !== 'active'
+        || requestedProduct.stock <= 0
+      ) {
+        const reply = 'این محصول الان برای خرید موجود نیست؛ چیزی رو به سبد اضافه نکردم.'
+        await db.insert(chatMessages).values({
+          sessionId,
+          role: 'assistant',
+          content: reply,
+        })
+        return NextResponse.json({
+          message: reply,
+          session_id: sessionId,
+          cartItems: [],
+          cartPlan: [],
+          leadCaptured: false,
+        })
+      }
+
+      if (directUserCartItem.quantity > requestedProduct.stock) {
+        const reply = `از ${requestedProduct.sku} تعداد ${requestedProduct.stock.toLocaleString('fa-IR')} عدد موجوده؛ درخواست ${directUserCartItem.quantity.toLocaleString('fa-IR')} عددی رو خودکار کم نمی‌کنم. تعداد موردنظرت رو تا سقف موجودی بگو.`
+        await db.insert(chatMessages).values({
+          sessionId,
+          role: 'assistant',
+          content: reply,
+        })
+        return NextResponse.json({
+          message: reply,
+          session_id: sessionId,
+          cartItems: [],
+          cartPlan: [],
+          leadCaptured: false,
+        })
+      }
+
+      const cartItem = {
+        id: requestedProduct.id,
+        slug: requestedProduct.slug,
+        categorySlug: requestedProduct.categorySlug ?? 'products',
+        nameFa: requestedProduct.name,
+        sku: requestedProduct.sku,
+        price: requestedProduct.price,
+        comparePrice: requestedProduct.comparePrice ?? undefined,
+        quantity: directUserCartItem.quantity,
+        placeholderFrom: '#DBEAFE',
+        placeholderTo: '#BFDBFE',
+      }
+
+      const reply = `حتماً 👌 ${requestedProduct.name} ×${directUserCartItem.quantity.toLocaleString('fa-IR')} به سبد خرید اضافه شد.`
+      await db.insert(chatMessages).values({
+        sessionId,
+        role: 'assistant',
+        content: reply,
+      })
+      return NextResponse.json({
+        message: reply,
+        session_id: sessionId,
+        cartItems: [cartItem],
+        cartMode: 'add',
         cartPlan: [],
         leadCaptured: false,
       })
