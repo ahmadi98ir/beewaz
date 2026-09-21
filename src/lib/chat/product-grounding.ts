@@ -308,6 +308,32 @@ export function inferCartPlanFromAssistantText<T extends CartPlanProduct>(
   return inferred
 }
 
+export function inferSingleExplicitUserCartItem<T extends GroundedProduct>(
+  text: string,
+  products: readonly T[],
+): CartDirectiveItem | null {
+  const matches = findMentionedProducts(text, products)
+  if (matches.length !== 1) return null
+
+  const normalized = normalizeDigits(text)
+    .replace(/ي/g, 'ی')
+    .replace(/ك/g, 'ک')
+    .replace(/[\u200c\u200f\u202a-\u202e]/g, ' ')
+    .toLocaleLowerCase('fa-IR')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  const explicitQty = normalized.match(/(\d{1,3})\s*(?:عدد|تا)(?:\s|$)/i)?.[1]
+  const quantity = explicitQty
+    ? Math.min(999, Math.max(1, Number.parseInt(explicitQty, 10)))
+    : 1
+
+  return {
+    sku: canonicalizeSku(matches[0]!.sku),
+    quantity,
+  }
+}
+
 export function isExplicitCartPurchaseIntent(text: string): boolean {
   const normalized = normalizeDigits(text)
     .replace(/ي/g, 'ی')
