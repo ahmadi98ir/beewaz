@@ -677,7 +677,7 @@ export async function POST(req: NextRequest) {
       ? inferSingleExplicitUserCartItem(latestUserText, catalogProducts)
       : null
 
-    if (directUserCartItem && !isSecurityPackageConversation([latestUserText])) {
+    if (directUserCartItem) {
       const requestedProduct = catalogProducts.find(
         (product) => canonicalizeSku(product.sku) === canonicalizeSku(directUserCartItem.sku),
       )
