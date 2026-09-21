@@ -6,6 +6,7 @@ import {
   extractCartSignals,
   hasCartPlanModificationIntent,
   inferCartPlanFromAssistantText,
+  inferSingleExplicitUserCartItem,
   isCartCommitIntent,
   isExplicitCartPurchaseIntent,
   findMentionedProducts,
@@ -187,6 +188,18 @@ describe('product grounding helpers', () => {
       { sku: 'MG10', quantity: 8 },
       { sku: 'P100', quantity: 2 },
     ])
+  })
+
+  it('parses a direct single-product purchase without relying on model markers', () => {
+    expect(inferSingleExplicitUserCartItem('۲ تا P100 رو بذار تو سبد', PRODUCTS)).toEqual({
+      sku: 'P100',
+      quantity: 2,
+    })
+    expect(inferSingleExplicitUserCartItem('BH-21 رو می‌خوام بخرم', PRODUCTS)).toEqual({
+      sku: 'BH21',
+      quantity: 1,
+    })
+    expect(inferSingleExplicitUserCartItem('BH20 و BH21 رو مقایسه کن', PRODUCTS)).toBeNull()
   })
 
   it('recognizes terse approvals only as commit intent when a plan exists upstream', () => {
