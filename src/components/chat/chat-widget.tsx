@@ -82,7 +82,8 @@ export function ChatWidget() {
     sku: string
     quantity: number
   }>>([])
-  const addCartItem = useCart((state) => state.addItem)
+  const addCartItemQuantity = useCart((state) => state.addItemQuantity)
+  const ensureCartItemQuantity = useCart((state) => state.ensureItemQuantity)
   const openCart = useCart((state) => state.openCart)
   const currentCartItems = useCart((state) => state.items)
 
@@ -214,6 +215,7 @@ export function ChatWidget() {
         leadCaptured?: boolean
         phone?: string
         error?: string
+        cartMode?: 'add' | 'ensure'
         cartPlan?: Array<{
           sku: string
           quantity: number
@@ -269,10 +271,12 @@ export function ChatWidget() {
 
         if (data.cartItems && data.cartItems.length > 0) {
           data.cartItems.forEach((item) => {
-            const quantity = Math.max(1, Math.min(20, item.quantity || 1))
+            const quantity = Math.max(1, Math.min(999, Math.trunc(item.quantity || 1)))
             const { quantity: _quantity, ...cartItem } = item
-            for (let index = 0; index < quantity; index += 1) {
-              addCartItem(cartItem)
+            if (data.cartMode === 'ensure') {
+              ensureCartItemQuantity(cartItem, quantity)
+            } else {
+              addCartItemQuantity(cartItem, quantity)
             }
           })
           openCart()
@@ -322,7 +326,8 @@ export function ChatWidget() {
       })
     }
   }, [
-    addCartItem,
+    addCartItemQuantity,
+    ensureCartItemQuantity,
     currentCartItems,
     history,
     isTyping,
