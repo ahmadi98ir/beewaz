@@ -3,6 +3,8 @@ import {
   assessSecurityCart,
   classifySecurityProduct,
   getPanelWiredZoneCapacity,
+  getPanelWirelessZoneCapacity,
+  getSecurityProductConnectionType,
   securityCartGuardMessage,
   shouldEnforceSystemCompleteness,
   wiredZoneCapacityGuardMessage,
@@ -27,6 +29,38 @@ describe('security system builder', () => {
       name: 'مگنت سیمی بیواز MG10',
       category: 'حسگر ها',
     })).toBe('opening_sensor')
+  })
+
+  it('does not misclassify a panel because its description mentions sensors', () => {
+    expect(classifySecurityProduct({
+      sku: 'BH21',
+      name: 'دستگاه دزدگیر BH21 بیواز',
+      category: 'پنل های مرکزی هشدار',
+      description: 'پشتیبانی از سنسورهای سیمی و بی‌سیم و مگنت در و پنجره',
+    })).toBe('panel')
+  })
+
+  it('does not misclassify a shock sensor as an opening sensor just because its description mentions a door', () => {
+    expect(classifySecurityProduct({
+      sku: 'BSH30',
+      name: 'شوک‌سنسور سیمی بیواز BSH30',
+      category: 'سنسورهای محیطی',
+      description: 'برای تشخیص شوک، شکست شیشه و حتی باز شدن درب',
+    })).toBe('other')
+  })
+
+  it('detects connection type from product identity before description noise', () => {
+    expect(getSecurityProductConnectionType({
+      sku: 'MG11',
+      name: 'مگنت بی‌سیم بیواز MG11',
+      description: 'قابل استفاده در کنار تجهیزات سیمی دیگر',
+    })).toBe('wireless')
+
+    expect(getSecurityProductConnectionType({
+      sku: 'P100',
+      name: 'چشمی حرکتی بیواز P100',
+      description: 'حسگر حرکتی PIR سیمی',
+    })).toBe('wired')
   })
 
   it('rejects a detector-only cart as incomplete because it has no panel', () => {
@@ -105,6 +139,20 @@ describe('security system builder', () => {
       description: 'این دستگاه دارای 9 زون سیمی و 20 زون بی‌سیم است.',
       specs: [],
     })).toBe(9)
+  })
+
+
+  it('reads wireless zone capacity from panel description without confusing it with wired capacity', () => {
+    const panel = {
+      sku: 'BH21',
+      name: 'دستگاه دزدگیر BH21 بیواز',
+      category: 'پنل های مرکزی هشدار',
+      description: 'این دستگاه دارای 9 زون سیمی و 20 زون بی‌سیم است.',
+      specs: [{ key: 'اتصالات', value: '9 عدد زون سیمی / برد 4 رله' }],
+    }
+
+    expect(getPanelWiredZoneCapacity(panel)).toBe(9)
+    expect(getPanelWirelessZoneCapacity(panel)).toBe(20)
   })
 
   it('blocks a ready-to-install claim when wired detectors exceed registered wired zones', () => {
