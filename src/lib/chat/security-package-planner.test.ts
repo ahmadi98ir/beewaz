@@ -18,6 +18,7 @@ const PRODUCTS: DeterministicPackageProduct[] = [
     status: 'active',
     category: 'پنل های مرکزی هشدار',
     categorySlug: 'central-warning-panels',
+    description: 'دارای 5 زون سیمی و 20 زون بی‌سیم',
     specs: [{ key: 'اتصالات', value: '5 عدد زون سیمی / برد 4 رله / آنتن GSM' }],
   },
   {
@@ -29,6 +30,7 @@ const PRODUCTS: DeterministicPackageProduct[] = [
     status: 'active',
     category: 'پنل های مرکزی هشدار',
     categorySlug: 'central-warning-panels',
+    description: 'دارای 9 زون سیمی و 20 زون بی‌سیم',
     specs: [{ key: 'اتصالات', value: '9 عدد زون سیمی / برد 4 رله / آنتن GSM / آنتن SUB GHz' }],
   },
   {
@@ -36,6 +38,15 @@ const PRODUCTS: DeterministicPackageProduct[] = [
     sku: 'MG10',
     name: 'مگنت سیمی بیواز MG10',
     price: 2_900_000,
+    stock: 50,
+    status: 'active',
+    category: 'سنسورهای محیطی',
+  },
+  {
+    id: 'mg11',
+    sku: 'MG11',
+    name: 'مگنت بی‌سیم بیواز MG11',
+    price: 9_499_990,
     stock: 50,
     status: 'active',
     category: 'سنسورهای محیطی',
@@ -63,6 +74,7 @@ describe('deterministic security package planner', () => {
       windows: 6,
       motionAreas: null,
       wiringPreference: 'unknown',
+      wirelessStrict: false,
       novice: true,
     })
   })
@@ -152,12 +164,72 @@ describe('deterministic security package planner', () => {
     })
   })
 
-  it('refuses to invent a fully wireless package without structured compatibility data', () => {
+  it('refuses a strictly all-wireless package when no wireless motion sensor exists', () => {
     const needs = extractSecurityNeeds([
       'خونه من ۲ تا در و ۶ تا پنجره داره، یه پکیج کاملاً بی‌سیم بده',
     ])
 
+    expect(needs.wirelessStrict).toBe(true)
     const result = buildDeterministicSecurityPackage(PRODUCTS, needs)
     expect(result.status).toBe('unsupported')
+  })
+
+  it('builds a validated hybrid package for a normal wireless preference', () => {
+    const needs = extractSecurityNeeds([
+      'خونه من ۲ تا در و ۳ تا پنجره داره، بی‌سیم چی پیشنهاد میدی؟',
+    ])
+
+    expect(needs.wiringPreference).toBe('wireless')
+    expect(needs.wirelessStrict).toBe(false)
+
+    const result = buildDeterministicSecurityPackage(PRODUCTS, needs)
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+
+    expect(result.mode).toBe('hybrid')
+    expect(result.items.map((item) => [item.product.sku, item.quantity])).toEqual([
+      ['BH20', 1],
+      ['MG11', 5],
+      ['P100', 1],
+    ])
+    expect(result.wiredDetectorCount).toBe(1)
+    expect(result.wirelessDetectorCount).toBe(5)
+    expect(result.panelWiredCapacity).toBe(5)
+    expect(result.panelWirelessCapacity).toBe(20)
+  })
+
+  it('prefers a compatible panel already present in the cart', () => {
+    const needs = extractSecurityNeeds([
+      'خونه ۲ تا در و ۲ تا پنجره داره و یه پکیج مناسب می‌خوام',
+    ])
+
+    const result = buildDeterministicSecurityPackage(PRODUCTS, needs, {
+      preferredPanelSku: 'BH21',
+    })
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+
+    expect(result.items[0]?.product.sku).toBe('BH21')
+  })
+
+  it('does not truncate large opening counts to twenty', () => {
+    const products = PRODUCTS.map((product) => (
+      product.sku === 'BH21'
+        ? {
+            ...product,
+            description: 'دارای 40 زون سیمی و 40 زون بی‌سیم',
+            specs: [{ key: 'اتصالات', value: '40 عدد زون سیمی' }],
+          }
+        : product
+    ))
+
+    const needs = extractSecurityNeeds([
+      'یه ملک دارم با ۲ تا در و ۲۳ تا پنجره، پکیج سیمی پیشنهاد بده',
+    ])
+    const result = buildDeterministicSecurityPackage(products, needs)
+    expect(result.status).toBe('ready')
+    if (result.status !== 'ready') return
+
+    expect(result.items.find((item) => item.product.sku === 'MG10')?.quantity).toBe(25)
   })
 })
