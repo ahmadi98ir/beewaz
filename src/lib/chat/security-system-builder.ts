@@ -292,6 +292,30 @@ export function wiredZoneCapacityGuardMessage(
 }
 
 
+export function wirelessZoneCapacityGuardMessage(
+  products: readonly CartSelectionProduct[],
+): string | null {
+  const panel = products.find(
+    (product) => product.quantity > 0 && classifySecurityProduct(product) === 'panel',
+  )
+  if (!panel) return null
+
+  const capacity = getPanelWirelessZoneCapacity(panel)
+  if (capacity === null) return null
+
+  const wirelessDetectorCount = products.reduce((sum, product) => {
+    const role = classifySecurityProduct(product)
+    const detector = role === 'motion_sensor' || role === 'opening_sensor'
+    return detector && isWirelessSecurityProduct(product)
+      ? sum + Math.max(0, product.quantity)
+      : sum
+  }, 0)
+
+  if (wirelessDetectorCount <= capacity) return null
+
+  return `یه نکته مهم قبل از خرید داریم: ترکیب فعلی ${toPersianDigits(wirelessDetectorCount)} حسگر بی‌سیم دارد، ولی برای پنل ${panel.sku} فقط ${toPersianDigits(capacity)} زون بی‌سیم در مشخصات ثبت شده. برای جلوگیری از ترکیب ناسازگار، این پکیج را وارد سبد نمی‌کنم تا تعداد حسگرها یا پنل اصلاح شود.`
+}
+
 export function hasSecurityRole(
   products: readonly CartSelectionProduct[],
   role: SecurityProductRole,
