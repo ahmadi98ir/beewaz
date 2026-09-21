@@ -165,8 +165,8 @@ function parseCartPayloads(payloads: readonly string[]): CartDirectiveItem[] {
     if (!sku) continue
 
     const rawQuantity = parsed[2] ? Number.parseInt(parsed[2], 10) : 1
-    const quantity = Math.min(20, Math.max(1, Number.isFinite(rawQuantity) ? rawQuantity : 1))
-    quantities.set(sku, Math.min(20, (quantities.get(sku) ?? 0) + quantity))
+    const quantity = Math.min(999, Math.max(1, Number.isFinite(rawQuantity) ? rawQuantity : 1))
+    quantities.set(sku, Math.min(999, (quantities.get(sku) ?? 0) + quantity))
   }
 
   return Array.from(quantities, ([sku, quantity]) => ({ sku, quantity }))
