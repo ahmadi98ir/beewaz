@@ -21,6 +21,7 @@ import {
   assessSecurityCart,
   classifySecurityProduct,
   getPanelWiredZoneCapacity,
+  getSecurityProductConnectionType,
   isExplicitPanelOnlyRequest,
   securityCartGuardMessage,
   shouldEnforceSystemCompleteness,
@@ -459,10 +460,16 @@ export async function POST(req: NextRequest) {
         const product = catalogProducts.find(
           (candidate) => canonicalizeSku(candidate.sku) === canonicalizeSku(sku),
         )
-        if (!product || product.status !== 'active' || product.stock <= 0) return null
+        const normalizedQuantity = Math.max(1, Math.min(999, Math.trunc(quantity || 1)))
+        if (
+          !product
+          || product.status !== 'active'
+          || product.stock <= 0
+          || normalizedQuantity > product.stock
+        ) return null
         return {
           product,
-          quantity: Math.min(Math.max(1, quantity), product.stock, 20),
+          quantity: normalizedQuantity,
         }
       })
       .filter((selection): selection is ValidatedSelection => !!selection)
@@ -478,7 +485,7 @@ export async function POST(req: NextRequest) {
           if (!key || merged.has(key)) continue
           merged.set(key, {
             sku: item.sku,
-            quantity: Math.min(20, Math.max(1, item.quantity || 1)),
+            quantity: Math.min(999, Math.max(1, Math.trunc(item.quantity || 1))),
           })
         }
       }
@@ -559,11 +566,68 @@ export async function POST(req: NextRequest) {
           .join('\n')
       : '- پیشنهاد ساختاریافتهٔ معتبر و آماده خرید از turn قبلی نداریم.'
 
+    const currentCartPanelSkus = Array.from(new Set(
+      currentCart
+        .map((item) => catalogProducts.find(
+          (product) => canonicalizeSku(product.sku) === canonicalizeSku(item.sku),
+        ))
+        .filter((product): product is ProductSnapshot => !!product)
+        .filter((product) => classifySecurityProduct({
+          sku: product.sku,
+          name: product.name,
+          category: product.category,
+          categorySlug: product.categorySlug,
+          description: product.description,
+        }) === 'panel')
+        .map((product) => canonicalizeSku(product.sku)),
+    ))
+
+    const currentPlanPanel = currentPlanSelections.find(({ product }) => (
+      classifySecurityProduct({
+        sku: product.sku,
+        name: product.name,
+        category: product.category,
+        categorySlug: product.categorySlug,
+        description: product.description,
+      }) === 'panel'
+    ))
+    const currentPlanPanelSku = currentPlanPanel
+      ? canonicalizeSku(currentPlanPanel.product.sku)
+      : null
+    const planPanelConflict = !!currentPlanPanelSku && currentCartPanelSkus.some(
+      (sku) => sku !== currentPlanPanelSku,
+    )
+
     const plainPlanApproval = (
       currentPlanReady
+      && !planPanelConflict
       && isCartCommitIntent(latestUserText)
       && !hasCartPlanModificationIntent(latestUserText)
     )
+
+    if (
+      currentPlanReady
+      && planPanelConflict
+      && isCartCommitIntent(latestUserText)
+      && !hasCartPlanModificationIntent(latestUserText)
+    ) {
+      const existingPanels = currentCartPanelSkus.join('، ')
+      const reply = `سبدت الان پنل ${existingPanels} داره، ولی پکیج تأییدشده به ${currentPlanPanelSku} نیاز داره. برای جلوگیری از ثبت دو پنل، خودکار پنل دوم اضافه نمی‌کنم؛ اول پنل قبلی رو از سبد حذف کن یا پکیج رو دوباره بر اساس همون پنل موجود برات می‌چینم.`
+
+      await db.insert(chatMessages).values({
+        sessionId,
+        role: 'assistant',
+        content: reply,
+      })
+
+      return NextResponse.json({
+        message: reply,
+        session_id: sessionId,
+        cartItems: [],
+        cartPlan: currentPlanItems,
+        leadCaptured: false,
+      })
+    }
 
     // Deterministic commit path: once BEE has already proposed a validated
     // package, a terse approval never goes back through the LLM. This prevents
@@ -594,6 +658,7 @@ export async function POST(req: NextRequest) {
         message: reply,
         session_id: sessionId,
         cartItems,
+        cartMode: 'ensure',
         cartPlan: [],
         leadCaptured: false,
       })
@@ -610,7 +675,6 @@ export async function POST(req: NextRequest) {
         isPackageRecommendationIntent(latestUserText)
         || isPackageRequirementsUpdate(latestUserText)
         || isExplicitCartPurchaseIntent(latestUserText)
-        || currentPlanReady
       )
     )
 
@@ -647,7 +711,27 @@ export async function POST(req: NextRequest) {
       }))
 
       const needs = extractSecurityNeeds(userTexts)
-      const packagePlan = buildDeterministicSecurityPackage(plannerProducts, needs)
+
+      if (currentCartPanelSkus.length > 1) {
+        const message = `الان بیشتر از یک پنل مرکزی توی سبدت هست (${currentCartPanelSkus.join('، ')}). برای اینکه پکیج اشتباه یا تکراری نسازم، اول فقط یک پنل رو نگه دار؛ بعد دقیقاً بقیه اقلام لازم رو بر اساس همون می‌چینم.`
+        await db.insert(chatMessages).values({
+          sessionId,
+          role: 'assistant',
+          content: message,
+        })
+        return NextResponse.json({
+          message,
+          session_id: sessionId,
+          cartItems: [],
+          cartPlan: [],
+          leadCaptured: false,
+        })
+      }
+
+      const preferredPanelSku = currentCartPanelSkus[0] ?? null
+      const packagePlan = buildDeterministicSecurityPackage(plannerProducts, needs, {
+        preferredPanelSku,
+      })
 
       if (packagePlan.status === 'needs_input') {
         await db.insert(chatMessages).values({
@@ -674,6 +758,23 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({
           message: packagePlan.message,
+          session_id: sessionId,
+          cartItems: [],
+          cartPlan: [],
+          leadCaptured: false,
+        })
+      }
+
+      const selectedPanelSku = canonicalizeSku(packagePlan.items[0]!.product.sku)
+      if (preferredPanelSku && preferredPanelSku !== selectedPanelSku) {
+        const message = `پنل ${preferredPanelSku} که الان توی سبدته برای ترکیب جدید از کنترل ظرفیت عبور نمی‌کنه و پکیج به ${selectedPanelSku} نیاز داره. چون حذف یا جایگزینی پنل بدون اجازه‌ات درست نیست، فعلاً پنل دوم اضافه نمی‌کنم؛ پنل قبلی رو حذف کن یا بگو ترکیب رو تغییر بدم.`
+        await db.insert(chatMessages).values({
+          sessionId,
+          role: 'assistant',
+          content: message,
+        })
+        return NextResponse.json({
+          message,
           session_id: sessionId,
           cartItems: [],
           cartPlan: [],
@@ -711,23 +812,54 @@ export async function POST(req: NextRequest) {
         })
       }
 
-      const openingCount = (needs.doors ?? 0) + (needs.windows ?? 0)
       const areaText = needs.areaM2
         ? `برای خونه ${needs.areaM2.toLocaleString('fa-IR')} متری با ${needs.windows?.toLocaleString('fa-IR')} پنجره و ${needs.doors?.toLocaleString('fa-IR')} در ورودی،`
         : `برای ${needs.windows?.toLocaleString('fa-IR')} پنجره و ${needs.doors?.toLocaleString('fa-IR')} در ورودی،`
 
-      const panelItem = packagePlan.items[0]!
-      const openingItem = packagePlan.items[1]!
-      const motionItem = packagePlan.items[2]!
       const totalToman = Math.floor(packagePlan.totalPrice / 10).toLocaleString('fa-IR')
+      const modeLabel = packagePlan.mode === 'wired'
+        ? 'سیمی'
+        : packagePlan.mode === 'wireless'
+          ? 'بی‌سیم'
+          : 'هیبریدی'
+
+      const itemLines = packagePlan.items.map((item) => {
+        const role = classifySecurityProduct(item.product)
+        const connection = getSecurityProductConnectionType(item.product)
+        const connectionLabel = role === 'panel'
+          ? ''
+          : connection === 'wireless'
+            ? ' بی‌سیم'
+            : connection === 'wired'
+              ? ' سیمی'
+              : ''
+
+        if (role === 'panel') {
+          return `• ${item.product.sku} ×${item.quantity.toLocaleString('fa-IR')} — پنل مرکزی`
+        }
+        if (role === 'opening_sensor') {
+          return `• ${item.product.sku} ×${item.quantity.toLocaleString('fa-IR')} — مگنت${connectionLabel} برای درها و پنجره‌ها`
+        }
+        if (role === 'motion_sensor') {
+          return `• ${item.product.sku} ×${item.quantity.toLocaleString('fa-IR')} — چشمی حرکتی${connectionLabel} برای پوشش پایه فضای داخلی`
+        }
+        return `• ${item.product.sku} ×${item.quantity.toLocaleString('fa-IR')}`
+      })
+
+      const capacityParts = [
+        packagePlan.wiredDetectorCount > 0 && packagePlan.panelWiredCapacity !== null
+          ? `${packagePlan.wiredDetectorCount.toLocaleString('fa-IR')} نقطه سیمی / ظرفیت پنل ${packagePlan.panelWiredCapacity.toLocaleString('fa-IR')}`
+          : '',
+        packagePlan.wirelessDetectorCount > 0 && packagePlan.panelWirelessCapacity !== null
+          ? `${packagePlan.wirelessDetectorCount.toLocaleString('fa-IR')} نقطه بی‌سیم / ظرفیت پنل ${packagePlan.panelWirelessCapacity.toLocaleString('fa-IR')}`
+          : '',
+      ].filter(Boolean).join(' — ')
 
       const recommendation = [
-        `${areaText} این پکیج پایه سیمی رو پیشنهاد می‌دم:`,
-        `• ${panelItem.product.sku} ×۱ — پنل مرکزی`,
-        `• ${openingItem.product.sku} ×${openingCount.toLocaleString('fa-IR')} — برای همه درها و پنجره‌ها`,
-        `• ${motionItem.product.sku} ×${motionItem.quantity.toLocaleString('fa-IR')} — پوشش پایه فضای داخلی`,
-        `جمع: حدود ${totalToman} تومان. این ترکیب ${packagePlan.wiredDetectorCount.toLocaleString('fa-IR')} نقطه سیمی دارد و پنل انتخابی ظرفیت ثبت‌شده ${packagePlan.panelWiredCapacity.toLocaleString('fa-IR')} زون سیمی دارد.`,
-        'اگر اوکیه بگو «بذار تو سبد»؛ همین ترکیب رو مستقیم اضافه می‌کنم.',
+        `${areaText} این پکیج پایه ${modeLabel} رو پیشنهاد می‌دم:`,
+        ...itemLines,
+        `جمع: حدود ${totalToman} تومان.${capacityParts ? ` ظرفیت‌سنجی: ${capacityParts}.` : ''}`,
+        'اگر اوکیه بگو «بذار تو سبد»؛ همین ترکیب رو بدون دوباره‌کاری وارد سبد می‌کنم.',
       ].join('\n')
 
       const wantsImmediatePurchase = isExplicitCartPurchaseIntent(latestUserText)
@@ -760,6 +892,7 @@ export async function POST(req: NextRequest) {
         message,
         session_id: sessionId,
         cartItems,
+        cartMode: wantsImmediatePurchase ? 'ensure' : undefined,
         cartPlan: wantsImmediatePurchase
           ? []
           : packagePlan.items.map((item) => ({
@@ -904,6 +1037,7 @@ export async function POST(req: NextRequest) {
       message: reply,
       session_id: sessionId,
       cartItems,
+      cartMode: cartItems.length > 0 ? 'add' : undefined,
       cartPlan,
       leadCaptured,
       phone: leadCaptured ? phoneMatch![0] : undefined,
