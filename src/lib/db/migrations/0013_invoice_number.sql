@@ -14,8 +14,15 @@ BEGIN
     SELECT data_type FROM information_schema.columns
     WHERE table_name = 'orders' AND column_name = 'invoice_number'
   ) != 'bigint' THEN
-    -- اگر varchar بود، تبدیل کن (مقادیر قدیمی NULL می‌مانند)
-    ALTER TABLE orders ALTER COLUMN invoice_number TYPE bigint USING NULL;
+    -- اگر varchar بود، مقادیر عددی معتبر را حفظ کن؛ فقط مقادیر واقعاً
+    -- غیرعددی (legacy/corrupt) به NULL تبدیل می‌شوند — بدون از دست دادن داده
+    ALTER TABLE orders ALTER COLUMN invoice_number TYPE bigint
+      USING (
+        CASE
+          WHEN invoice_number::text ~ '^[0-9]+$' THEN invoice_number::text::bigint
+          ELSE NULL
+        END
+      );
   END IF;
 END $$;
 
